@@ -19,19 +19,22 @@ const state = {
     currentUser: JSON.parse(localStorage.getItem('cellCatalogUser')) || null,
     isAdminLoggedIn: localStorage.getItem('cellCatalogAdmin') === 'true',
     products: {}, 
+    allOrders: {},
     currentCategory: 'Todos',
     gallery: { images: [], index: 0 },
     tempVariants: [],
-    currentVarBuilder: { colors: [], extraLinks: [] }
+    currentVarBuilder: { colors: [], extraLinks: [] },
+    salesChart: null
 };
 
 function showView(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    const viewElement = document.getElementById(`view-${viewId}`);
+    const viewElement = document.getElementById('view-' + viewId);
     if (viewElement) viewElement.classList.add('active');
     
     if(viewId === 'catalog') filterProducts(); 
     if(viewId === 'cart') renderCart();
+    if(viewId === 'my-orders') loadClientOrders();
     updateNavbar();
 }
 
@@ -40,13 +43,16 @@ function updateNavbar() {
     const userBtn = document.getElementById('nav-user-btn');
     const adminBtn = document.getElementById('nav-admin-btn');
     const adminLogoutBtn = document.getElementById('nav-admin-logout');
+    const ordersBtn = document.getElementById('nav-orders-btn');
 
     if (state.currentUser) {
-        userBtn.innerHTML = `<i class="fas fa-user-check"></i> ${state.currentUser.name.split(' ')[0]}`;
+        userBtn.innerHTML = '<i class="fas fa-user-check"></i> ' + state.currentUser.name.split(' ')[0];
         userBtn.onclick = () => showView('cart');
+        ordersBtn.style.display = 'inline-block';
     } else {
-        userBtn.innerHTML = `<i class="fas fa-user"></i> Entrar`;
+        userBtn.innerHTML = '<i class="fas fa-user"></i> Entrar';
         userBtn.onclick = () => showView('login');
+        ordersBtn.style.display = 'none';
     }
 
     if (state.isAdminLoggedIn) {
@@ -54,8 +60,7 @@ function updateNavbar() {
         adminLogoutBtn.style.display = "inline-block";
         if(document.querySelector('.view.active') && document.querySelector('.view.active').id === 'view-admin-login') {
             showView('admin-panel');
-            loadAdminProducts();
-            loadAdminOrders();
+            showAdminTab('dash');
         }
     } else {
         adminBtn.style.color = "#94a3b8";
@@ -74,7 +79,7 @@ function fileToBase64(file) {
 function sanitizeEmail(email) { return btoa(email); }
 
 // ==========================================
-// CATÁLOGO E FILTROS
+// CATÁLOGO E PRODUTOS
 // ==========================================
 onValue(ref(db, 'estoque'), (snapshot) => {
     state.products = snapshot.val() || {};
@@ -83,17 +88,24 @@ onValue(ref(db, 'estoque'), (snapshot) => {
     if(state.isAdminLoggedIn) loadAdminProducts();
 });
 
+onValue(ref(db, 'vendas'), (snapshot) => {
+    state.allOrders = snapshot.val() || {};
+    if(state.isAdminLoggedIn) {
+        loadAdminOrders();
+        filterDashboard();
+    }
+});
+
 function renderCategoryButtons() {
     const categories = new Set(['Todos']);
     Object.values(state.products).forEach(p => {
         if(p.category) categories.add(p.category.toUpperCase());
     });
-
     const filterContainer = document.getElementById('category-filters');
     filterContainer.innerHTML = '';
     categories.forEach(cat => {
         const btn = document.createElement('button');
-        btn.className = `cat-btn ${state.currentCategory === cat ? 'active' : ''}`;
+        btn.className = 'cat-btn ' + (state.currentCategory === cat ? 'active' : '');
         btn.innerText = cat;
         btn.onclick = () => {
             state.currentCategory = cat;
@@ -116,16 +128,15 @@ function filterProducts() {
     });
 
     if(filtered.length === 0) {
-        grid.innerHTML = '<p>Nenhum produto encontrado com estes filtros.</p>';
+        grid.innerHTML = '<p>Nenhum produto encontrado.</p>';
         return;
     }
 
     filtered.forEach(([id, p]) => {
-        const imgAction = `onclick="app.openGallery('${id}')" title="Ver fotos"`;
-
-        let optionsHtml = '';
+        const imgAction = 'onclick="app.openGallery(\'' + id + '\')" title="Ver fotos"';
+        let optionsHtml = ''; 
         let colorHtml = '';
-        let displayPrice = parseFloat(p.price) || 0;
+        let displayPrice = parseFloat(p.price) || 0; 
         let displayImg = p.image;
 
         if (p.variants && p.variants.length > 0) {
@@ -133,28 +144,27 @@ function filterProducts() {
             displayPrice = parseFloat(firstVar.price) || 0;
             if (firstVar.mainImage) displayImg = firstVar.mainImage;
 
-            optionsHtml = `
-                <select id="select-var-${id}" class="variant-select" onchange="app.changeProductPrice('${id}', this.value)" style="margin-bottom: 5px;">
-                    ${p.variants.map((v, i) => {
-                        let label = v.size || 'Padrão';
-                        if(v.ram) label += ` / ${v.ram}`;
-                        return `<option value="${i}">${label}</option>`;
-                    }).join('')}
-                </select>
-            `;
+            let optionsList = "";
+            p.variants.forEach((v, i) => {
+                let label = v.size || 'Padrão';
+                if(v.ram) label += ' / ' + v.ram;
+                optionsList += '<option value="' + i + '">' + label + '</option>';
+            });
+
+            optionsHtml = '<select id="select-var-' + id + '" class="variant-select" onchange="app.changeProductPrice(\'' + id + '\', this.value)" style="margin-bottom: 5px;">' + optionsList + '</select>';
 
             if (firstVar.colors && firstVar.colors.length > 0) {
-                colorHtml = `
-                    <select id="select-color-${id}" class="variant-select color-select">
-                        ${firstVar.colors.map(c => `<option value="${c}">${c}</option>`).join('')}
-                    </select>
-                `;
+                let colorsList = "";
+                firstVar.colors.forEach(c => {
+                    colorsList += '<option value="' + c + '">' + c + '</option>';
+                });
+                colorHtml = '<select id="select-color-' + id + '" class="variant-select color-select">' + colorsList + '</select>';
             } else {
-                colorHtml = `<select id="select-color-${id}" class="variant-select color-select" style="display:none;"><option value="">Padrão</option></select>`;
+                colorHtml = '<select id="select-color-' + id + '" class="variant-select color-select" style="display:none;"><option value="">Padrão</option></select>';
             }
         } else {
-            optionsHtml = `<input type="hidden" id="select-var-${id}" value="-1">`;
-            colorHtml = `<input type="hidden" id="select-color-${id}" value="">`;
+            optionsHtml = '<input type="hidden" id="select-var-' + id + '" value="-1">';
+            colorHtml = '<input type="hidden" id="select-color-' + id + '" value="">';
         }
 
         grid.innerHTML += `
@@ -163,37 +173,33 @@ function filterProducts() {
                 <div class="product-info">
                     <div class="product-title">${p.name}</div>
                     <div class="product-specs">${p.specs}</div>
-                    ${optionsHtml}
+                    ${optionsHtml} 
                     ${colorHtml}
                     <div class="product-price" id="price-display-${id}">R$ ${displayPrice.toFixed(2)}</div>
-                    <button class="btn-primary" onclick="app.addToCartSelected('${id}')">
-                        Adicionar ao Carrinho
-                    </button>
+                    <button class="btn-primary" onclick="app.addToCartSelected('${id}')">Adicionar ao Carrinho</button>
                 </div>
-            </div>
-        `;
+            </div>`;
     });
 }
 
 function changeProductPrice(id, variantIndex) {
     const p = state.products[id];
     if(!p || !p.variants || variantIndex === "-1") return;
-    
     const v = p.variants[variantIndex];
-    const price = parseFloat(v.price) || 0;
+    document.getElementById('price-display-' + id).innerText = 'R$ ' + (parseFloat(v.price) || 0).toFixed(2);
     
-    document.getElementById(`price-display-${id}`).innerText = `R$ ${price.toFixed(2)}`;
-
-    const imgEl = document.getElementById(`img-display-${id}`);
+    const imgEl = document.getElementById('img-display-' + id);
     if(imgEl) imgEl.src = v.mainImage ? v.mainImage : p.image;
-
-    const colorSelect = document.getElementById(`select-color-${id}`);
+    
+    const colorSelect = document.getElementById('select-color-' + id);
     if(colorSelect) {
         if(v.colors && v.colors.length > 0) {
-            colorSelect.innerHTML = v.colors.map(c => `<option value="${c}">${c}</option>`).join('');
+            let colorsList = "";
+            v.colors.forEach(c => { colorsList += '<option value="' + c + '">' + c + '</option>'; });
+            colorSelect.innerHTML = colorsList;
             colorSelect.style.display = 'block';
         } else {
-            colorSelect.innerHTML = `<option value="">Padrão</option>`;
+            colorSelect.innerHTML = '<option value="">Padrão</option>';
             colorSelect.style.display = 'none';
         }
     }
@@ -201,41 +207,37 @@ function changeProductPrice(id, variantIndex) {
 
 function addToCartSelected(id) {
     const p = state.products[id];
-    const selectVar = document.getElementById(`select-var-${id}`);
-    const selectColor = document.getElementById(`select-color-${id}`);
+    const selectVar = document.getElementById('select-var-' + id);
+    const selectColor = document.getElementById('select-color-' + id);
     
     let finalName = p.name;
     let finalPrice = parseFloat(p.price) || 0;
     let selectedColor = selectColor && selectColor.style.display !== 'none' ? selectColor.value : '';
 
     if (p.variants && p.variants.length > 0) {
-        const vIndex = selectVar.value;
-        const v = p.variants[vIndex];
-        
+        const v = p.variants[selectVar.value];
         let varDesc = v.size || 'Padrão';
-        if(v.ram) varDesc += ` / ${v.ram}`;
-        if(selectedColor) varDesc += ` - Cor: ${selectedColor}`;
-        
-        finalName = `${p.name} (${varDesc})`;
+        if(v.ram) varDesc += ' / ' + v.ram;
+        if(selectedColor) varDesc += ' - Cor: ' + selectedColor;
+        finalName = p.name + ' (' + varDesc + ')';
         finalPrice = parseFloat(v.price) || 0;
     } else if (selectedColor) {
-        finalName = `${p.name} (Cor: ${selectedColor})`;
+        finalName = p.name + ' (Cor: ' + selectedColor + ')';
     }
 
     state.cart.push({ id, name: finalName, price: finalPrice });
-    alert(`${finalName} adicionado ao carrinho!`);
+    alert(finalName + ' adicionado ao carrinho!');
     updateNavbar();
 }
 
 // ==========================================
-// GALERIA E AUTENTICAÇÃO
+// GALERIA
 // ==========================================
 function openGallery(id) {
     const p = state.products[id];
     if(!p) return;
     let images = [];
-    const selectVar = document.getElementById(`select-var-${id}`);
-
+    const selectVar = document.getElementById('select-var-' + id);
     if (selectVar && selectVar.value !== "-1" && p.variants) {
         const v = p.variants[selectVar.value];
         if (v.mainImage) images.push(v.mainImage);
@@ -246,37 +248,27 @@ function openGallery(id) {
         if (p.extraImages && p.extraImages.length > 0) images = images.concat(p.extraImages);
     }
     if(images.length > 0) {
-        state.gallery.images = images;
-        state.gallery.index = 0;
+        state.gallery.images = images; state.gallery.index = 0;
         updateGalleryUI();
         document.getElementById('gallery-modal').style.display = 'flex';
     }
 }
-
 function updateGalleryUI() {
     document.getElementById('gallery-img').src = state.gallery.images[state.gallery.index];
-    document.getElementById('gallery-counter').innerText = `${state.gallery.index + 1} / ${state.gallery.images.length}`;
+    document.getElementById('gallery-counter').innerText = (state.gallery.index + 1) + ' / ' + state.gallery.images.length;
 }
-function prevImage() {
-    if(state.gallery.index > 0) state.gallery.index--;
-    else state.gallery.index = state.gallery.images.length - 1;
-    updateGalleryUI();
-}
-function nextImage() {
-    if(state.gallery.index < state.gallery.images.length - 1) state.gallery.index++;
-    else state.gallery.index = 0;
-    updateGalleryUI();
-}
+function prevImage() { state.gallery.index = state.gallery.index > 0 ? state.gallery.index - 1 : state.gallery.images.length - 1; updateGalleryUI(); }
+function nextImage() { state.gallery.index = state.gallery.index < state.gallery.images.length - 1 ? state.gallery.index + 1 : 0; updateGalleryUI(); }
 function closeGallery() { document.getElementById('gallery-modal').style.display = 'none'; }
 
+// ==========================================
+// CLIENTE (AUTH E PEDIDOS)
+// ==========================================
 function toggleClientAuthMode() {
     const loginForm = document.getElementById('client-login-form');
     const regForm = document.getElementById('client-register-form');
-    if(loginForm.style.display === 'none') {
-        loginForm.style.display = 'block'; regForm.style.display = 'none';
-    } else {
-        loginForm.style.display = 'none'; regForm.style.display = 'block';
-    }
+    if(loginForm.style.display === 'none') { loginForm.style.display = 'block'; regForm.style.display = 'none'; } 
+    else { loginForm.style.display = 'none'; regForm.style.display = 'block'; }
 }
 
 async function registerClient() {
@@ -287,15 +279,14 @@ async function registerClient() {
     const password = document.getElementById('reg-pass').value;
 
     if(!name || !email || !password || !phone) return alert("Preencha os campos obrigatórios!");
-
     const clientId = sanitizeEmail(email);
     const clientData = { name, email, phone, address, password };
 
     await set(ref(db, `clientes/${clientId}`), clientData);
     state.currentUser = clientData;
     localStorage.setItem('cellCatalogUser', JSON.stringify(clientData));
-    alert("Cadastro realizado com sucesso!");
-    showView('cart');
+    alert("Cadastro realizado!");
+    showView('catalog');
 }
 
 async function loginClient() {
@@ -306,14 +297,69 @@ async function loginClient() {
     if (snapshot.exists() && snapshot.val().password === pass) {
         state.currentUser = snapshot.val();
         localStorage.setItem('cellCatalogUser', JSON.stringify(snapshot.val()));
-        showView('cart');
-    } else {
-        alert("Email ou Senha incorretos!");
+        showView('catalog');
+    } else { alert("Email ou Senha incorretos!"); }
+}
+
+function loadClientOrders() {
+    if(!state.currentUser) return;
+    const list = document.getElementById('client-orders-list');
+    list.innerHTML = '';
+    
+    const myOrders = Object.entries(state.allOrders)
+        .filter(([id, o]) => o.client.email === state.currentUser.email)
+        .reverse();
+
+    if(myOrders.length === 0) {
+        list.innerHTML = '<p>Você ainda não fez nenhum pedido.</p>';
+        return;
+    }
+
+    myOrders.forEach(([id, o]) => {
+        const itemsList = o.items.map(i => i.name).join('<br> - ');
+        
+        let statusBadge = `<span class="badge badge-status" style="background:#e2e8f0; color:#333;">${o.status}</span>`;
+        if(o.status.includes('Despacho') || o.status.includes('Caminho')) statusBadge = `<span class="badge badge-status" style="background:var(--info); color:white;">${o.status}</span>`;
+        if(o.status.includes('Concluído') || o.status.includes('Recebido')) statusBadge = `<span class="badge badge-status" style="background:var(--success); color:white;">${o.status}</span>`;
+
+        let extraAction = '';
+        if(o.status === 'Despachado' || o.status === 'Pagamento Aprovado - Em Despacho') {
+            const days = o.deliveryDays || 'N/A';
+            extraAction = `
+                <div style="background:#f0fdf4; padding:15px; border-radius:8px; border:1px solid #bbf7d0; margin-top:10px;">
+                    <p style="color:var(--success); font-weight:bold; margin-bottom:10px;"><i class="fas fa-truck"></i> Previsão de entrega: ${days} dias</p>
+                    <button onclick="app.clientConfirmReceipt('${id}')" class="btn-success">Recebi meu Pedido Perfeitamente</button>
+                </div>
+            `;
+        }
+
+        list.innerHTML += `
+            <div class="client-order-card">
+                <div class="client-order-header">
+                    <div>
+                        <small style="color:#64748b;">Pedido feito em: ${o.dateStr || o.date}</small>
+                        <h3 style="margin-top:5px;">Total: R$ ${o.total.toFixed(2)}</h3>
+                    </div>
+                    <div>${statusBadge}</div>
+                </div>
+                <div style="font-size: 0.9rem; color: #475569;">
+                    <strong>Produtos:</strong><br> - ${itemsList}
+                </div>
+                ${extraAction}
+            </div>
+        `;
+    });
+}
+
+function clientConfirmReceipt(orderId) {
+    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O administrador será notificado para concluir a venda.")) {
+        update(ref(db, `vendas/${orderId}`), { status: "Entregue pelo Cliente" });
+        alert("Obrigado por confirmar! Sua compra foi finalizada com sucesso.");
     }
 }
 
 // ==========================================
-// LÓGICA DO PIX (QR CODE E PAYLOAD)
+// CHECKOUT E PIX
 // ==========================================
 function renderCart() {
     const list = document.getElementById('cart-items');
@@ -342,13 +388,8 @@ function renderCart() {
     document.getElementById('cart-total-price').innerText = total.toFixed(2);
 }
 
-function removeFromCart(index) {
-    state.cart.splice(index, 1);
-    renderCart();
-    updateNavbar();
-}
+function removeFromCart(index) { state.cart.splice(index, 1); renderCart(); updateNavbar(); }
 
-// Calculo do CRC16 necessário para PIX válido
 function crc16(payload) {
     let crc = 0xFFFF;
     for (let i = 0; i < payload.length; i++) {
@@ -362,53 +403,29 @@ function crc16(payload) {
     return crc.toString(16).toUpperCase().padStart(4, '0');
 }
 
-// Montador da string Payload PIX
 function generatePixPayload(pixKey, amount) {
-    const f = (id, val) => {
-        const str = String(val);
-        return `${id}${str.length.toString().padStart(2, '0')}${str}`;
-    };
-    
+    const f = (id, val) => { const str = String(val); return `${id}${str.length.toString().padStart(2, '0')}${str}`; };
     let p = "000201";
-    p += f("26", f("00", "br.gov.bcb.pix") + f("01", pixKey)); // Chave PIX
-    p += f("52", "0000"); // Categoria Comercial
-    p += f("53", "0986"); // Moeda BRL
-    p += f("54", amount.toFixed(2)); // Valor
-    p += f("58", "BR"); // Pais
-    p += f("59", "Click Premium"); // Nome do Recebedor
-    p += f("60", "Cidade"); // Cidade
-    p += f("62", f("05", "***")); // ID Transação
-    p += "6304"; // Prefixo CRC
-    p += crc16(p); // Valor CRC Calculado
-    
+    p += f("26", f("00", "br.gov.bcb.pix") + f("01", pixKey));
+    p += f("52", "0000"); p += f("53", "986"); p += f("54", amount.toFixed(2));
+    p += f("58", "BR"); p += f("59", "CLICK PREMIUM"); p += f("60", "CIDADE"); p += f("62", f("05", "***")); p += "6304";
+    p += crc16(p);
     return p;
 }
 
 async function startCheckout() {
-    if(!state.currentUser) {
-        alert("Você precisa fazer login ou se cadastrar para comprar!");
-        return showView('login');
-    }
+    if(!state.currentUser) return showView('login');
     if(state.cart.length === 0) return alert("Carrinho Vazio.");
     
-    // Busca a Chave PIX cadastrada pelo admin
     const snap = await get(ref(db, 'config/pixKey'));
     let pixKey = snap.exists() ? snap.val() : "";
-    
-    if(!pixKey) {
-        alert("Erro: O lojista ainda não configurou uma chave PIX.");
-        return;
-    }
+    if(!pixKey) return alert("Erro: O lojista ainda não configurou uma chave PIX.");
 
-    // Calcula valor total e gera o Payload (Copia e Cola)
     const total = state.cart.reduce((acc, item) => acc + parseFloat(item.price), 0);
     const pixPayload = generatePixPayload(pixKey, total);
     
-    // Atualiza a Tela
     document.getElementById('pix-total-display').innerText = total.toFixed(2);
     document.getElementById('pix-payload-input').value = pixPayload;
-    
-    // Usa uma API gratuita do Google/QR Server para converter o código do PIX em imagem
     document.getElementById('pix-qrcode').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(pixPayload)}`;
     
     document.getElementById('checkout-step').style.display = 'block';
@@ -417,13 +434,8 @@ async function startCheckout() {
 
 function copyPixPayload() {
     const input = document.getElementById('pix-payload-input');
-    input.select();
-    input.setSelectionRange(0, 99999); // Para mobile
-    navigator.clipboard.writeText(input.value).then(() => {
-        alert("Código PIX copiado! Cole no aplicativo do seu banco.");
-    }).catch(() => {
-        alert("Erro ao copiar. Selecione o código manualmente.");
-    });
+    input.select(); input.setSelectionRange(0, 99999); 
+    navigator.clipboard.writeText(input.value).then(() => alert("Código PIX copiado!")).catch(() => alert("Erro ao copiar."));
 }
 
 async function finishCheckout() {
@@ -433,20 +445,21 @@ async function finishCheckout() {
     const base64Receipt = await fileToBase64(fileInput.files[0]);
     const total = state.cart.reduce((acc, item) => acc + parseFloat(item.price), 0);
     
+    const now = new Date();
     const orderData = {
         client: state.currentUser,
         items: state.cart,
         total: total,
         receipt: base64Receipt,
         status: "Aguardando Validação",
-        date: new Date().toLocaleString()
+        timestamp: now.getTime(),
+        dateStr: now.toLocaleDateString('pt-BR'),
+        date: now.toLocaleString()
     };
 
     await set(push(ref(db, 'vendas')), orderData);
-    alert("Pedido enviado! O administrador irá validar seu PIX.");
-    state.cart = [];
-    renderCart();
-    showView('catalog');
+    alert("Pedido enviado! Acompanhe o status em 'Meus Pedidos'.");
+    state.cart = []; renderCart(); showView('my-orders');
 }
 
 // ==========================================
@@ -460,64 +473,166 @@ function loginAdmin() {
         localStorage.setItem('cellCatalogAdmin', 'true');
         updateNavbar();
         showView('admin-panel');
-        loadAdminProducts();
-        loadAdminOrders();
+        showAdminTab('dash');
         get(ref(db, 'config/pixKey')).then(snap => {
             if(snap.exists()) document.getElementById('admin-pix-key').value = snap.val();
         });
     } else { alert("Acesso negado."); }
 }
-
 function logoutAdmin() {
     state.isAdminLoggedIn = false;
     localStorage.removeItem('cellCatalogAdmin');
-    updateNavbar();
-    showView('catalog');
+    updateNavbar(); showView('catalog');
 }
 
 function showAdminTab(tab) {
     document.querySelectorAll('.admin-tab').forEach(t => t.style.display = 'none');
-    const targetTab = document.getElementById(`admin-tab-${tab}`);
+    const targetTab = document.getElementById('admin-tab-' + tab);
     if(targetTab) targetTab.style.display = 'block';
-    else document.getElementById(`admin-tab-products`).style.display = 'block';
+    
+    if(tab === 'dash') filterDashboard(); 
 }
 
+function openReceipt(base64) {
+    document.getElementById('receipt-img').src = base64;
+    document.getElementById('receipt-modal').style.display = 'flex';
+}
+
+function loadAdminOrders() {
+    const tbody = document.getElementById('admin-orders-list');
+    tbody.innerHTML = '';
+    
+    const activeOrders = Object.entries(state.allOrders).filter(([id, o]) => o.status !== "Concluído").reverse();
+
+    if(activeOrders.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5">Nenhuma venda pendente/em andamento no momento.</td></tr>';
+        return;
+    }
+
+    activeOrders.forEach(([id, o]) => {
+        const itemsList = o.items.map(i => i.name).join('<br>- ');
+        
+        let actionBtn = '';
+        if (o.status === "Aguardando Validação") {
+            actionBtn = `<button onclick="app.approveOrder('${id}')" class="btn-primary" style="margin-bottom:5px;"><i class="fas fa-truck"></i> Aprovar e Informar Despacho</button>`;
+        } else if (o.status === "Entregue pelo Cliente") {
+            actionBtn = `<button onclick="app.completeOrder('${id}')" class="btn-success"><i class="fas fa-check-double"></i> Concluir Venda</button>`;
+        } else {
+            actionBtn = `<span style="font-size:0.85rem; color:#64748b;">Aguardando ação do cliente...</span>`;
+        }
+
+        tbody.innerHTML += `
+            <tr>
+                <td><small>${o.dateStr || o.date}</small></td>
+                <td><strong>${o.client.name}</strong><br><small>${o.client.phone}</small></td>
+                <td><strong style="color:var(--success);">R$ ${o.total.toFixed(2)}</strong></td>
+                <td>
+                    <b>${o.status}</b><br>
+                    <a href="#" onclick="app.openReceipt('${o.receipt}')" style="font-size:0.85rem;">Ver Comprovante</a>
+                </td>
+                <td class="action-btns">${actionBtn}</td>
+            </tr>
+        `;
+    });
+}
+
+function approveOrder(id) {
+    const dias = prompt("Em quantos dias o pedido será entregue ao cliente? (Apenas número)");
+    if(dias && !isNaN(dias)) {
+        update(ref(db, `vendas/${id}`), { status: "Despachado", deliveryDays: dias });
+        alert("Status atualizado! O cliente verá a previsão de entrega no painel dele.");
+    }
+}
+
+function completeOrder(id) {
+    if(confirm("Deseja realmente marcar essa venda como CONCLUÍDA? Ela sairá desta tela e irá para o histórico do Dashboard.")) {
+        update(ref(db, `vendas/${id}`), { status: "Concluído" });
+    }
+}
+
+function filterDashboard() {
+    const startInput = document.getElementById('dash-start').value;
+    const endInput = document.getElementById('dash-end').value;
+    
+    let startTimestamp = 0;
+    let endTimestamp = Number.MAX_SAFE_INTEGER;
+
+    if(startInput) {
+        const s = new Date(startInput); s.setHours(0,0,0,0); startTimestamp = s.getTime();
+    }
+    if(endInput) {
+        const e = new Date(endInput); e.setHours(23,59,59,999); endTimestamp = e.getTime();
+    }
+
+    const completedOrders = Object.values(state.allOrders).filter(o => 
+        o.status === "Concluído" && o.timestamp >= startTimestamp && o.timestamp <= endTimestamp
+    );
+
+    let totalRevenue = 0;
+    const salesByDate = {};
+    const historyTbody = document.getElementById('dash-history-list');
+    historyTbody.innerHTML = '';
+
+    completedOrders.sort((a,b) => b.timestamp - a.timestamp).forEach(o => {
+        totalRevenue += o.total;
+        const dateKey = o.dateStr || new Date(o.timestamp).toLocaleDateString('pt-BR');
+        salesByDate[dateKey] = (salesByDate[dateKey] || 0) + o.total;
+
+        historyTbody.innerHTML += `
+            <tr>
+                <td>${dateKey}</td>
+                <td>${o.client.name} <br> <small>${o.client.phone}</small></td>
+                <td><small>${o.items.map(i => i.name).join(', ')}</small></td>
+                <td><strong style="color:var(--success);">R$ ${o.total.toFixed(2)}</strong></td>
+            </tr>
+        `;
+    });
+
+    if(completedOrders.length === 0) historyTbody.innerHTML = '<tr><td colspan="4">Nenhuma venda concluída no período.</td></tr>';
+
+    document.getElementById('dash-total-val').innerText = 'R$ ' + totalRevenue.toFixed(2);
+    document.getElementById('dash-total-orders').innerText = completedOrders.length;
+    renderChart(salesByDate);
+}
+
+function renderChart(dataObj) {
+    const ctx = document.getElementById('salesChart');
+    const labels = Object.keys(dataObj).reverse(); 
+    const data = labels.map(l => dataObj[l]);
+
+    if(state.salesChart) state.salesChart.destroy(); 
+    state.salesChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels.length > 0 ? labels : ['Sem dados'],
+            datasets: [{ label: 'Faturamento (R$)', data: data.length > 0 ? data : [0], backgroundColor: '#2563eb', borderRadius: 4 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+    });
+}
+
+// === LÓGICA DE PRODUTOS ===
 function addVarColor() {
     const color = document.getElementById('var-color-input').value.trim();
-    if(!color) return;
-    state.currentVarBuilder.colors.push(color);
-    document.getElementById('var-color-input').value = '';
-    renderVarBuilderLists();
+    if(!color) return; state.currentVarBuilder.colors.push(color);
+    document.getElementById('var-color-input').value = ''; renderVarBuilderLists();
 }
-
-function removeVarColor(index) {
-    state.currentVarBuilder.colors.splice(index, 1);
-    renderVarBuilderLists();
-}
-
+function removeVarColor(index) { state.currentVarBuilder.colors.splice(index, 1); renderVarBuilderLists(); }
 function addVarExtraLink() {
     const link = document.getElementById('var-extra-img-link').value.trim();
-    if(!link) return;
-    state.currentVarBuilder.extraLinks.push(link);
-    document.getElementById('var-extra-img-link').value = '';
-    renderVarBuilderLists();
+    if(!link) return; state.currentVarBuilder.extraLinks.push(link);
+    document.getElementById('var-extra-img-link').value = ''; renderVarBuilderLists();
 }
-
-function removeVarExtraLink(index) {
-    state.currentVarBuilder.extraLinks.splice(index, 1);
-    renderVarBuilderLists();
-}
+function removeVarExtraLink(index) { state.currentVarBuilder.extraLinks.splice(index, 1); renderVarBuilderLists(); }
 
 function renderVarBuilderLists() {
-    const colorContainer = document.getElementById('var-colors-list');
-    colorContainer.innerHTML = state.currentVarBuilder.colors.map((c, i) =>
-        `<span class="badge badge-color">${c} <i class="fas fa-times" onclick="app.removeVarColor(${i})" style="cursor:pointer; margin-left:3px;"></i></span>`
-    ).join('');
+    let colorHtml = "";
+    state.currentVarBuilder.colors.forEach((c, i) => { colorHtml += '<span class="badge badge-color">' + c + ' <i class="fas fa-times" onclick="app.removeVarColor(' + i + ')" style="cursor:pointer; margin-left:3px;"></i></span>'; });
+    document.getElementById('var-colors-list').innerHTML = colorHtml;
 
-    const linkContainer = document.getElementById('var-links-list');
-    linkContainer.innerHTML = state.currentVarBuilder.extraLinks.map((l, i) =>
-        `<span class="badge badge-link">Link Adicionado <i class="fas fa-times" onclick="app.removeVarExtraLink(${i})" style="cursor:pointer; margin-left:3px;"></i></span>`
-    ).join('');
+    let linkHtml = "";
+    state.currentVarBuilder.extraLinks.forEach((l, i) => { linkHtml += '<span class="badge badge-link">Link Adicionado <i class="fas fa-times" onclick="app.removeVarExtraLink(' + i + ')" style="cursor:pointer; margin-left:3px;"></i></span>'; });
+    document.getElementById('var-links-list').innerHTML = linkHtml;
 }
 
 async function addVariant() {
@@ -525,61 +640,30 @@ async function addVariant() {
     const ram = document.getElementById('var-ram').value.trim();
     const price = parseFloat(document.getElementById('var-price').value);
     const mainImg = document.getElementById('var-main-img').value.trim();
-
     if(!storage || isNaN(price)) return alert("Armazenamento e Preço são obrigatórios para salvar a variação!");
-
     let extraImages = [...state.currentVarBuilder.extraLinks];
     const fileInput = document.getElementById('var-extra-img-file');
-    
     if(fileInput.files.length > 0) {
-        for(let i=0; i < fileInput.files.length; i++) {
-            const b64 = await fileToBase64(fileInput.files[i]);
-            extraImages.push(b64);
-        }
+        for(let i=0; i < fileInput.files.length; i++) extraImages.push(await fileToBase64(fileInput.files[i]));
     }
-
-    state.tempVariants.push({
-        size: storage,
-        ram: ram,
-        price: price,
-        colors: [...state.currentVarBuilder.colors],
-        mainImage: mainImg,
-        extraImages: extraImages
-    });
-
+    state.tempVariants.push({ size: storage, ram: ram, price: price, colors: [...state.currentVarBuilder.colors], mainImage: mainImg, extraImages: extraImages });
     state.currentVarBuilder = { colors: [], extraLinks: [] };
-    document.getElementById('var-storage').value = '';
-    document.getElementById('var-ram').value = '';
-    document.getElementById('var-price').value = '';
-    document.getElementById('var-main-img').value = '';
-    document.getElementById('var-color-input').value = '';
-    document.getElementById('var-extra-img-link').value = '';
-    fileInput.value = '';
-
-    renderVarBuilderLists();
-    renderAdminVariants();
+    document.getElementById('var-storage').value = ''; document.getElementById('var-ram').value = ''; document.getElementById('var-price').value = '';
+    document.getElementById('var-main-img').value = ''; document.getElementById('var-color-input').value = ''; document.getElementById('var-extra-img-link').value = ''; fileInput.value = '';
+    renderVarBuilderLists(); renderAdminVariants();
 }
 
-function removeVariant(index) {
-    state.tempVariants.splice(index, 1);
-    renderAdminVariants();
-}
+function removeVariant(index) { state.tempVariants.splice(index, 1); renderAdminVariants(); }
 
 function renderAdminVariants() {
-    const list = document.getElementById('admin-variants-list');
-    list.innerHTML = '';
+    const list = document.getElementById('admin-variants-list'); list.innerHTML = '';
     state.tempVariants.forEach((v, index) => {
         const safePrice = parseFloat(v.price) || 0;
-        let desc = v.size;
-        if(v.ram) desc += ` / ${v.ram}`;
-        let colorsText = v.colors && v.colors.length > 0 ? `| Cores: ${v.colors.join(', ')}` : '';
-        let imgsText = (v.mainImage || (v.extraImages && v.extraImages.length > 0)) ? `| 📷 Imagens inclusas` : '';
-
-        list.innerHTML += `
-            <li style="margin-bottom: 8px;">
-                ${desc} - R$ ${safePrice.toFixed(2)} <span style="color:#64748b; font-size:0.85rem; font-weight:normal;">${colorsText} ${imgsText}</span>
-                <button onclick="app.removeVariant(${index})" style="color: red; border: none; background: none; cursor: pointer; margin-left: 10px;">(X Excluir)</button>
-            </li>`;
+        let desc = v.size; if(v.ram) desc += ' / ' + v.ram;
+        let colorsText = v.colors && v.colors.length > 0 ? '| Cores: ' + v.colors.join(', ') : '';
+        let imgsText = (v.mainImage || (v.extraImages && v.extraImages.length > 0)) ? '| 📷 Imagens inclusas' : '';
+        list.innerHTML += '<li style="margin-bottom: 8px;">' + desc + ' - R$ ' + safePrice.toFixed(2) + ' <span style="color:#64748b; font-size:0.85rem; font-weight:normal;">' + colorsText + ' ' + imgsText + '</span>' +
+            '<button onclick="app.removeVariant(' + index + ')" style="color: red; border: none; background: none; cursor: pointer; margin-left: 10px;">(X Excluir)</button></li>';
     });
 }
 
@@ -588,70 +672,41 @@ async function saveProduct() {
     const name = document.getElementById('prod-name').value;
     const category = document.getElementById('prod-category').value;
     const specs = document.getElementById('prod-specs').value;
-    
     const globalFileInput = document.getElementById('prod-img');
     const globalUrlInput = document.getElementById('prod-img-url').value;
     const globalExtraFilesInput = document.getElementById('prod-imgs-extra');
-
     if(!name) return alert("Preencha o Nome do produto!");
     if(state.tempVariants.length === 0) return alert("Adicione pelo menos UMA variação de armazenamento/preço na lista!");
 
     let finalImage = "";
-    if(globalUrlInput) {
-        finalImage = globalUrlInput;
-    } else if (globalFileInput.files.length > 0) {
-        finalImage = await fileToBase64(globalFileInput.files[0]);
-    } else if(id) {
-        finalImage = state.products[id].image; 
-    }
+    if(globalUrlInput) finalImage = globalUrlInput;
+    else if (globalFileInput.files.length > 0) finalImage = await fileToBase64(globalFileInput.files[0]);
+    else if(id) finalImage = state.products[id].image; 
 
     let extraImages = [];
-    if (id && state.products[id].extraImages && globalExtraFilesInput.files.length === 0) {
-        extraImages = state.products[id].extraImages;
-    } else if (globalExtraFilesInput.files.length > 0) {
-        for(let i = 0; i < globalExtraFilesInput.files.length; i++) {
-            extraImages.push(await fileToBase64(globalExtraFilesInput.files[i]));
-        }
+    if (id && state.products[id].extraImages && globalExtraFilesInput.files.length === 0) extraImages = state.products[id].extraImages;
+    else if (globalExtraFilesInput.files.length > 0) {
+        for(let i = 0; i < globalExtraFilesInput.files.length; i++) extraImages.push(await fileToBase64(globalExtraFilesInput.files[i]));
     }
-
     const prodData = { name, category, specs, image: finalImage, extraImages, variants: state.tempVariants };
 
-    if(id) {
-        await update(ref(db, `estoque/${id}`), prodData);
-        alert("Produto atualizado!");
-    } else {
-        await set(push(ref(db, 'estoque')), prodData);
-        alert("Produto cadastrado!");
-    }
-    
+    if(id) { await update(ref(db, `estoque/${id}`), prodData); alert("Produto atualizado!"); } 
+    else { await set(push(ref(db, 'estoque')), prodData); alert("Produto cadastrado!"); }
     cancelEdit(); 
 }
 
 function editProduct(id) {
-    const p = state.products[id];
-    if(!p) return;
-    
+    const p = state.products[id]; if(!p) return;
     document.getElementById('form-product-title').innerText = "Editar Produto";
-    document.getElementById('edit-prod-id').value = id;
-    document.getElementById('prod-name').value = p.name;
-    document.getElementById('prod-category').value = p.category;
-    document.getElementById('prod-specs').value = p.specs;
-    
-    document.getElementById('prod-img').value = '';
-    document.getElementById('prod-img-url').value = '';
-    document.getElementById('prod-imgs-extra').value = '';
+    document.getElementById('edit-prod-id').value = id; document.getElementById('prod-name').value = p.name;
+    document.getElementById('prod-category').value = p.category; document.getElementById('prod-specs').value = p.specs;
+    document.getElementById('prod-img').value = ''; document.getElementById('prod-img-url').value = ''; document.getElementById('prod-imgs-extra').value = '';
 
     if(p.variants) {
-        state.tempVariants = p.variants.map(v => ({
-            size: v.size, ram: v.ram, price: parseFloat(v.price), 
-            colors: v.colors || [], mainImage: v.mainImage || '', extraImages: v.extraImages || []
-        }));
-    } else {
-        state.tempVariants = [{ size: "Padrão", price: parseFloat(p.price) || 0 }];
-    }
+        state.tempVariants = p.variants.map(v => ({ size: v.size, ram: v.ram, price: parseFloat(v.price), colors: v.colors || [], mainImage: v.mainImage || '', extraImages: v.extraImages || [] }));
+    } else state.tempVariants = [{ size: "Padrão", price: parseFloat(p.price) || 0 }];
     
     renderAdminVariants();
-
     document.getElementById('btn-save-prod').innerText = "Atualizar Produto (Finalizar Edição)";
     document.getElementById('btn-cancel-edit').style.display = "block";
     window.scrollTo(0, 0);
@@ -659,87 +714,36 @@ function editProduct(id) {
 
 function cancelEdit() {
     document.getElementById('form-product-title').innerText = "Cadastrar Novo Produto";
-    document.getElementById('edit-prod-id').value = '';
-    document.getElementById('prod-name').value = '';
-    document.getElementById('prod-category').value = '';
-    document.getElementById('prod-specs').value = '';
-    document.getElementById('prod-img').value = '';
-    document.getElementById('prod-img-url').value = '';
-    document.getElementById('prod-imgs-extra').value = '';
-    
-    state.tempVariants = [];
-    state.currentVarBuilder = { colors: [], extraLinks: [] };
-    renderAdminVariants();
-    renderVarBuilderLists();
-
+    document.getElementById('edit-prod-id').value = ''; document.getElementById('prod-name').value = '';
+    document.getElementById('prod-category').value = ''; document.getElementById('prod-specs').value = '';
+    document.getElementById('prod-img').value = ''; document.getElementById('prod-img-url').value = ''; document.getElementById('prod-imgs-extra').value = '';
+    state.tempVariants = []; state.currentVarBuilder = { colors: [], extraLinks: [] };
+    renderAdminVariants(); renderVarBuilderLists();
     document.getElementById('btn-save-prod').innerText = "Finalizar Cadastro do Produto";
     document.getElementById('btn-cancel-edit').style.display = "none";
 }
 
-function deleteProduct(id) {
-    if(confirm("Excluir este produto e todas suas variações?")) remove(ref(db, `estoque/${id}`));
-}
-
+function deleteProduct(id) { if(confirm("Excluir este produto e todas suas variações?")) remove(ref(db, `estoque/${id}`)); }
 function loadAdminProducts() {
-    const tbody = document.getElementById('admin-products-list');
-    tbody.innerHTML = '';
+    const tbody = document.getElementById('admin-products-list'); tbody.innerHTML = '';
     Object.keys(state.products).forEach(id => {
         const p = state.products[id];
-        let priceText = "";
-        let displayImg = p.image;
-
+        let priceText = ""; let displayImg = p.image;
         if(p.variants && p.variants.length > 0) {
             priceText = `R$ ${parseFloat(p.variants[0].price).toFixed(2)} <small>(+${p.variants.length-1} var.)</small>`;
             if (p.variants[0].mainImage) displayImg = p.variants[0].mainImage;
-        } else {
-            priceText = `R$ ${parseFloat(p.price || 0).toFixed(2)}`;
-        }
-
+        } else { priceText = `R$ ${parseFloat(p.price || 0).toFixed(2)}`; }
         tbody.innerHTML += `
-            <tr>
-                <td><img src="${displayImg}"></td>
-                <td>${p.name}<br><small>${p.category}</small></td>
-                <td>${priceText}</td>
-                <td class="action-btns">
-                    <button onclick="app.editProduct('${id}')" class="btn-warning" title="Editar"><i class="fas fa-edit"></i></button>
-                    <button onclick="app.deleteProduct('${id}')" class="btn-danger" title="Excluir"><i class="fas fa-trash"></i></button>
-                </td>
-            </tr>
-        `;
+            <tr><td><img src="${displayImg}"></td><td>${p.name}<br><small>${p.category}</small></td><td>${priceText}</td>
+            <td class="action-btns">
+                <button onclick="app.editProduct('${id}')" class="btn-warning" title="Editar"><i class="fas fa-edit"></i></button>
+                <button onclick="app.deleteProduct('${id}')" class="btn-danger" title="Excluir"><i class="fas fa-trash"></i></button>
+            </td></tr>`;
     });
 }
-
-function loadAdminOrders() {
-    onValue(ref(db, 'vendas'), (snapshot) => {
-        const tbody = document.getElementById('admin-orders-list');
-        tbody.innerHTML = '';
-        const data = snapshot.val();
-        if(data) {
-            Object.keys(data).reverse().forEach(id => {
-                const o = data[id];
-                const itemsList = o.items.map(i => i.name).join(', ');
-                tbody.innerHTML += `
-                    <tr>
-                        <td><small>${id}</small><br><strong>${o.date}</strong></td>
-                        <td>${o.client.name}<br><small>${o.client.phone}</small></td>
-                        <td>R$ ${o.total.toFixed(2)}<br><small>${itemsList}</small></td>
-                        <td><b>${o.status}</b></td>
-                        <td><a href="${o.receipt}" download="comprovante_${o.client.name}">Ver Comprovante</a></td>
-                        <td>
-                            <button onclick="app.approveOrder('${id}')" class="btn-success">Aprovar / Despachar</button>
-                        </td>
-                    </tr>
-                `;
-            });
-        }
-    });
-}
-
-function approveOrder(id) { update(ref(db, `vendas/${id}`), { status: "Pagamento Aprovado - Em Despacho" }); }
 function savePixKey() {
     const key = document.getElementById('admin-pix-key').value;
-    set(ref(db, 'config/pixKey'), key);
-    alert("Chave PIX atualizada com sucesso!");
+    set(ref(db, 'config/pixKey'), key); alert("Chave PIX atualizada com sucesso!");
 }
 
 updateNavbar();
@@ -747,9 +751,9 @@ if(!state.isAdminLoggedIn) showView('catalog');
 else updateNavbar(); 
 
 window.app = {
-    showView, toggleClientAuthMode, registerClient, loginClient,
+    showView, toggleClientAuthMode, registerClient, loginClient, loadClientOrders, clientConfirmReceipt,
     addToCartSelected, removeFromCart, startCheckout, finishCheckout, filterProducts, changeProductPrice,
-    loginAdmin, logoutAdmin, showAdminTab, saveProduct, editProduct, cancelEdit, deleteProduct, approveOrder, savePixKey,
+    loginAdmin, logoutAdmin, showAdminTab, saveProduct, editProduct, cancelEdit, deleteProduct, approveOrder, completeOrder, openReceipt, savePixKey, filterDashboard,
     openGallery, closeGallery, prevImage, nextImage, addVariant, removeVariant,
     addVarColor, removeVarColor, addVarExtraLink, removeVarExtraLink, copyPixPayload
 };

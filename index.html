@@ -6,6 +6,8 @@
     <title>Click Premium - Catálogo</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Biblioteca de Gráficos -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <!-- Navbar -->
@@ -15,13 +17,14 @@
         </div>
         <div class="nav-links">
             <button onclick="app.showView('catalog')">Catálogo</button>
+            <button id="nav-orders-btn" onclick="app.showView('my-orders')" style="display: none;"><i class="fas fa-box"></i> Meus Pedidos</button>
             <button onclick="app.showView('cart')">
                 <i class="fas fa-shopping-cart"></i> Carrinho (<span id="cart-count">0</span>)
             </button>
             <button id="nav-user-btn" onclick="app.showView('login')"><i class="fas fa-user"></i> Entrar</button>
             
             <button id="nav-admin-btn" onclick="app.showView('admin-login')" class="admin-btn"><i class="fas fa-cog"></i></button>
-            <button id="nav-admin-logout" onclick="app.logoutAdmin()" class="admin-btn" style="display:none; color: var(--danger) !important;"><i class="fas fa-sign-out-alt"></i> Sair Admin</button>
+            <button id="nav-admin-logout" onclick="app.logoutAdmin()" class="admin-btn" style="display:none; color: var(--danger) !important;"><i class="fas fa-sign-out-alt"></i> Sair</button>
         </div>
     </nav>
 
@@ -35,6 +38,15 @@
                 <div id="category-filters" class="category-filters"></div>
             </div>
             <div class="product-grid" id="product-grid"></div>
+        </section>
+
+        <!-- VISÃO: MEUS PEDIDOS (CLIENTE) -->
+        <section id="view-my-orders" class="view">
+            <h2>Meus Pedidos</h2>
+            <p style="color: #64748b; margin-bottom: 20px;">Acompanhe o status das suas compras.</p>
+            <div id="client-orders-list" style="display: flex; flex-direction: column; gap: 15px;">
+                <!-- Pedidos do cliente gerados via JS -->
+            </div>
         </section>
 
         <!-- VISÃO: LOGIN/CADASTRO CLIENTE -->
@@ -67,8 +79,6 @@
                 <div class="cart-total">Total: R$ <span id="cart-total-price">0.00</span></div>
                 
                 <div id="checkout-step" style="display: none;">
-                    
-                    <!-- AREA DO PIX COM QR CODE E COPIA/COLA -->
                     <div class="pix-payment-box">
                         <h3 style="display: flex; align-items: center; justify-content: center; gap: 8px;">
                             <i class="fas fa-qrcode" style="color: #6366f1;"></i> Pagamento via Pix
@@ -117,12 +127,50 @@
                     <h3>Painel Admin</h3>
                     <button onclick="app.showAdminTab('dash')">Dashboard</button>
                     <button onclick="app.showAdminTab('products')">Produtos</button>
-                    <button onclick="app.showAdminTab('orders')">Vendas</button>
+                    <button onclick="app.showAdminTab('orders')">Vendas Ativas</button>
                     <button onclick="app.showAdminTab('settings')">Configurações</button>
                     <button onclick="app.logoutAdmin()" class="btn-danger">Sair do Admin</button>
                 </aside>
                 <main class="admin-content">
                     
+                    <!-- Aba: Dashboard -->
+                    <div id="admin-tab-dash" class="admin-tab" style="display:none;">
+                        <h2>Dashboard de Faturamento</h2>
+                        
+                        <div class="dash-filters">
+                            <div>
+                                <label>Data Inicial:</label>
+                                <input type="date" id="dash-start">
+                            </div>
+                            <div>
+                                <label>Data Final:</label>
+                                <input type="date" id="dash-end">
+                            </div>
+                            <button onclick="app.filterDashboard()" class="btn-primary" style="width: auto; align-self: flex-end;">Filtrar</button>
+                        </div>
+
+                        <div class="dash-cards">
+                            <div class="dash-card">
+                                <h4>Faturamento Realizado</h4>
+                                <span id="dash-total-val" style="color: var(--success);">R$ 0,00</span>
+                            </div>
+                            <div class="dash-card">
+                                <h4>Vendas Concluídas</h4>
+                                <span id="dash-total-orders" style="color: var(--primary);">0</span>
+                            </div>
+                        </div>
+
+                        <div class="dash-chart-container">
+                            <canvas id="salesChart"></canvas>
+                        </div>
+
+                        <h3 style="margin-top: 30px;">Histórico de Vendas (Concluídas)</h3>
+                        <table class="admin-table">
+                            <thead><tr><th>Data</th><th>Cliente (Contato)</th><th>Produtos</th><th>Valor Total</th></tr></thead>
+                            <tbody id="dash-history-list"></tbody>
+                        </table>
+                    </div>
+
                     <!-- Aba: Produtos -->
                     <div id="admin-tab-products" class="admin-tab active">
                         <h2 id="form-product-title">Cadastrar Novo Produto</h2>
@@ -131,12 +179,10 @@
                             <input type="text" id="prod-name" placeholder="Modelo do Aparelho (ex: iPhone 13)">
                             <input type="text" id="prod-category" placeholder="Categoria/Marca (ex: Apple)">
                             <textarea id="prod-specs" placeholder="Especificações Gerais (Processador, Tela, etc)"></textarea>
-                            
                             <hr style="margin: 15px 0; border:0; border-top: 2px solid #cbd5e1;">
                             
-                            <!-- CONSTRUTOR DE VARIAÇÕES -->
                             <label style="font-size: 1.1rem; color: var(--primary);"><strong><i class="fas fa-layer-group"></i> Construtor de Variações</strong></label>
-                            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 15px;">Adicione as versões (ex: 64GB, 128GB). Cada versão pode ter suas cores, preço e imagens exclusivas.</p>
+                            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 15px;">Adicione as versões (ex: 64GB, 128GB).</p>
                             
                             <div style="background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px dashed #94a3b8; margin-bottom: 15px;">
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
@@ -151,7 +197,7 @@
                                 </div>
                                 <div id="var-colors-list" style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:15px; min-height: 25px;"></div>
                                 <label style="font-size: 0.9rem;"><strong>Imagens Específicas (Opcional):</strong></label>
-                                <input type="text" id="var-main-img" placeholder="Link da Foto Principal (Muda a foto do card ao selecionar)">
+                                <input type="text" id="var-main-img" placeholder="Link da Foto Principal">
                                 <div style="display: flex; gap: 10px; margin-top: 5px; margin-bottom: 5px;">
                                     <input type="text" id="var-extra-img-link" placeholder="Link de Foto Adicional (Galeria)">
                                     <button onclick="app.addVarExtraLink()" class="btn-primary" style="width: auto; padding: 0.5rem 1rem;">+ Link</button>
@@ -163,13 +209,11 @@
                             <ul id="admin-variants-list" style="margin-bottom: 15px; padding-left: 20px; font-weight: bold; color: var(--primary);"></ul>
                             
                             <hr style="margin: 15px 0; border:0; border-top: 2px solid #cbd5e1;">
-                            
-                            <label><strong>Imagens Padrão do Produto (Caso a variação não tenha foto):</strong></label>
+                            <label><strong>Imagens Padrão do Produto:</strong></label>
                             <input type="file" id="prod-img" accept="image/*" style="margin-top: 5px;">
                             <input type="text" id="prod-img-url" placeholder="OU Link da Foto Padrão">
                             <label style="font-size: 0.85rem; margin-top: 10px; display: block;">Fotos adicionais padrão:</label>
                             <input type="file" id="prod-imgs-extra" accept="image/*" multiple>
-
                             <button id="btn-save-prod" onclick="app.saveProduct()" class="btn-primary" style="margin-top: 20px; font-size: 1.1rem; padding: 1rem;">Finalizar Cadastro do Produto</button>
                             <button id="btn-cancel-edit" onclick="app.cancelEdit()" class="btn-danger" style="display:none; margin-top: 10px; width: 100%;">Cancelar Edição</button>
                         </div>
@@ -180,11 +224,12 @@
                         </table>
                     </div>
 
-                    <!-- Aba: Vendas -->
+                    <!-- Aba: Vendas (APENAS ATIVAS) -->
                     <div id="admin-tab-orders" class="admin-tab" style="display:none;">
-                        <h2>Gerenciamento de Vendas</h2>
+                        <h2>Gerenciamento de Vendas (Em Andamento)</h2>
+                        <p style="color: #64748b; margin-bottom: 15px;">Pedidos que já foram concluídos aparecerão apenas no Dashboard.</p>
                         <table class="admin-table">
-                            <thead><tr><th>ID/Data</th><th>Cliente</th><th>Total</th><th>Status</th><th>Comprovante</th><th>Ação</th></tr></thead>
+                            <thead><tr><th>Data</th><th>Cliente</th><th>Total</th><th>Status</th><th>Ação</th></tr></thead>
                             <tbody id="admin-orders-list"></tbody>
                         </table>
                     </div>
@@ -203,7 +248,7 @@
         </section>
     </main>
 
-    <!-- Modal de Galeria de Fotos -->
+    <!-- Modal Galeria -->
     <div id="gallery-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content">
             <button class="modal-close" onclick="app.closeGallery()"><i class="fas fa-times"></i></button>
@@ -213,6 +258,14 @@
             <div id="gallery-counter" class="gallery-counter">1/1</div>
         </div>
     </div>
+    <!-- Modal Comprovante -->
+    <div id="receipt-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button class="modal-close" onclick="document.getElementById('receipt-modal').style.display='none'"><i class="fas fa-times"></i></button>
+            <img id="receipt-img" src="" style="background: white;">
+        </div>
+    </div>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>
