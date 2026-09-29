@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Click Premium - Catálogo</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="logo" onclick="app.showView('catalog')">
+            <i class="fas fa-mobile-alt"></i> Click Premium
+        </div>
+        <div class="nav-links">
+            <button onclick="app.showView('catalog')">Catálogo</button>
+            <button onclick="app.showView('cart')">
+                <i class="fas fa-shopping-cart"></i> Carrinho (<span id="cart-count">0</span>)
+            </button>
+            <button id="nav-user-btn" onclick="app.showView('login')"><i class="fas fa-user"></i> Entrar</button>
+            
+            <button id="nav-admin-btn" onclick="app.showView('admin-login')" class="admin-btn"><i class="fas fa-cog"></i></button>
+            <button id="nav-admin-logout" onclick="app.logoutAdmin()" class="admin-btn" style="display:none; color: var(--danger) !important;"><i class="fas fa-sign-out-alt"></i> Sair Admin</button>
+        </div>
+    </nav>
+
+    <!-- App Container -->
+    <main id="app-container">
+        
+        <!-- VISÃO: CATÁLOGO -->
+        <section id="view-catalog" class="view active">
+            <div class="catalog-controls">
+                <input type="text" id="search-input" placeholder="Buscar por modelo, marca..." onkeyup="app.filterProducts()">
+                <div id="category-filters" class="category-filters"></div>
+            </div>
+            <div class="product-grid" id="product-grid"></div>
+        </section>
+
+        <!-- VISÃO: LOGIN/CADASTRO CLIENTE -->
+        <section id="view-login" class="view">
+            <div class="auth-container">
+                <h2>Identificação</h2>
+                <div id="client-login-form">
+                    <input type="email" id="cli-email" placeholder="Seu E-mail">
+                    <input type="password" id="cli-pass" placeholder="Senha">
+                    <button onclick="app.loginClient()" class="btn-primary">Entrar</button>
+                    <p>Não tem conta? <a href="#" onclick="app.toggleClientAuthMode()">Cadastre-se</a></p>
+                </div>
+                <div id="client-register-form" style="display: none;">
+                    <input type="text" id="reg-name" placeholder="Nome Completo">
+                    <input type="email" id="reg-email" placeholder="E-mail">
+                    <input type="text" id="reg-phone" placeholder="Telefone / WhatsApp">
+                    <input type="text" id="reg-address" placeholder="Endereço Completo">
+                    <input type="password" id="reg-pass" placeholder="Crie uma Senha">
+                    <button onclick="app.registerClient()" class="btn-primary">Cadastrar</button>
+                    <p>Já tem conta? <a href="#" onclick="app.toggleClientAuthMode()">Faça Login</a></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISÃO: CARRINHO E CHECKOUT -->
+        <section id="view-cart" class="view">
+            <div class="checkout-container">
+                <h2>Seu Carrinho</h2>
+                <div id="cart-items"></div>
+                <div class="cart-total">Total: R$ <span id="cart-total-price">0.00</span></div>
+                
+                <div id="checkout-step" style="display: none;">
+                    
+                    <!-- AREA DO PIX COM QR CODE E COPIA/COLA -->
+                    <div class="pix-payment-box">
+                        <h3 style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                            <i class="fas fa-qrcode" style="color: #6366f1;"></i> Pagamento via Pix
+                        </h3>
+                        <p class="pix-total">Total a Pagar: <strong>R$ <span id="pix-total-display">0.00</span></strong></p>
+                        
+                        <div class="qr-code-wrapper">
+                            <img id="pix-qrcode" src="" alt="QR Code Pix">
+                        </div>
+
+                        <div style="text-align: left; margin-bottom: 20px;">
+                            <label style="font-size: 0.9rem; font-weight: bold; color: var(--dark); display: block; margin-bottom: 5px;">Pix Copia e Cola:</label>
+                            <input type="text" id="pix-payload-input" readonly>
+                            <button onclick="app.copyPixPayload()" class="btn-secondary">
+                                <i class="fas fa-clipboard"></i> Copiar Código Pix
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="pix-instructions">
+                        <p>1. Faça o pagamento escaneando o QR Code ou copiando o código acima.<br>2. <strong>Anexe o comprovante abaixo</strong> para validar seu pedido.</p>
+                    </div>
+                    <input type="file" id="receipt-file" accept="image/*,.pdf" class="file-input">
+                    <button onclick="app.finishCheckout()" class="btn-success">
+                        <i class="fas fa-check-circle"></i> Enviar Comprovante e Finalizar
+                    </button>
+                </div>
+                <button id="btn-start-checkout" onclick="app.startCheckout()" class="btn-primary" style="margin-top: 15px;">Ir para Pagamento</button>
+            </div>
+        </section>
+
+        <!-- VISÃO: LOGIN ADMIN -->
+        <section id="view-admin-login" class="view">
+            <div class="auth-container">
+                <h2>Acesso Restrito (Admin)</h2>
+                <input type="text" id="admin-user" placeholder="Usuário">
+                <input type="password" id="admin-pass" placeholder="Senha">
+                <button onclick="app.loginAdmin()" class="btn-primary">Entrar no Painel</button>
+            </div>
+        </section>
+
+        <!-- VISÃO: PAINEL ADMIN -->
+        <section id="view-admin-panel" class="view">
+            <div class="admin-dashboard">
+                <aside class="admin-sidebar">
+                    <h3>Painel Admin</h3>
+                    <button onclick="app.showAdminTab('dash')">Dashboard</button>
+                    <button onclick="app.showAdminTab('products')">Produtos</button>
+                    <button onclick="app.showAdminTab('orders')">Vendas</button>
+                    <button onclick="app.showAdminTab('settings')">Configurações</button>
+                    <button onclick="app.logoutAdmin()" class="btn-danger">Sair do Admin</button>
+                </aside>
+                <main class="admin-content">
+                    
+                    <!-- Aba: Produtos -->
+                    <div id="admin-tab-products" class="admin-tab active">
+                        <h2 id="form-product-title">Cadastrar Novo Produto</h2>
+                        <div class="form-group" style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                            <input type="hidden" id="edit-prod-id">
+                            <input type="text" id="prod-name" placeholder="Modelo do Aparelho (ex: iPhone 13)">
+                            <input type="text" id="prod-category" placeholder="Categoria/Marca (ex: Apple)">
+                            <textarea id="prod-specs" placeholder="Especificações Gerais (Processador, Tela, etc)"></textarea>
+                            
+                            <hr style="margin: 15px 0; border:0; border-top: 2px solid #cbd5e1;">
+                            
+                            <!-- CONSTRUTOR DE VARIAÇÕES -->
+                            <label style="font-size: 1.1rem; color: var(--primary);"><strong><i class="fas fa-layer-group"></i> Construtor de Variações</strong></label>
+                            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 15px;">Adicione as versões (ex: 64GB, 128GB). Cada versão pode ter suas cores, preço e imagens exclusivas.</p>
+                            
+                            <div style="background: #f1f5f9; padding: 15px; border-radius: 8px; border: 1px dashed #94a3b8; margin-bottom: 15px;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                                    <input type="text" id="var-storage" placeholder="Armaz. (ex: 128GB)">
+                                    <input type="text" id="var-ram" placeholder="RAM (ex: 4GB)">
+                                    <input type="number" id="var-price" placeholder="Preço (R$)">
+                                </div>
+                                <label style="font-size: 0.9rem;"><strong>Cores desta versão:</strong></label>
+                                <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                                    <input type="text" id="var-color-input" placeholder="Nova Cor (ex: Azul)">
+                                    <button onclick="app.addVarColor()" class="btn-primary" style="width: auto; padding: 0.5rem 1rem;">+ Cor</button>
+                                </div>
+                                <div id="var-colors-list" style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:15px; min-height: 25px;"></div>
+                                <label style="font-size: 0.9rem;"><strong>Imagens Específicas (Opcional):</strong></label>
+                                <input type="text" id="var-main-img" placeholder="Link da Foto Principal (Muda a foto do card ao selecionar)">
+                                <div style="display: flex; gap: 10px; margin-top: 5px; margin-bottom: 5px;">
+                                    <input type="text" id="var-extra-img-link" placeholder="Link de Foto Adicional (Galeria)">
+                                    <button onclick="app.addVarExtraLink()" class="btn-primary" style="width: auto; padding: 0.5rem 1rem;">+ Link</button>
+                                </div>
+                                <div id="var-links-list" style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:10px;"></div>
+                                <input type="file" id="var-extra-img-file" accept="image/*" multiple style="margin-bottom: 10px;">
+                                <button onclick="app.addVariant()" class="btn-success" style="width: 100%;"><i class="fas fa-plus"></i> Salvar Variação na Lista</button>
+                            </div>
+                            <ul id="admin-variants-list" style="margin-bottom: 15px; padding-left: 20px; font-weight: bold; color: var(--primary);"></ul>
+                            
+                            <hr style="margin: 15px 0; border:0; border-top: 2px solid #cbd5e1;">
+                            
+                            <label><strong>Imagens Padrão do Produto (Caso a variação não tenha foto):</strong></label>
+                            <input type="file" id="prod-img" accept="image/*" style="margin-top: 5px;">
+                            <input type="text" id="prod-img-url" placeholder="OU Link da Foto Padrão">
+                            <label style="font-size: 0.85rem; margin-top: 10px; display: block;">Fotos adicionais padrão:</label>
+                            <input type="file" id="prod-imgs-extra" accept="image/*" multiple>
+
+                            <button id="btn-save-prod" onclick="app.saveProduct()" class="btn-primary" style="margin-top: 20px; font-size: 1.1rem; padding: 1rem;">Finalizar Cadastro do Produto</button>
+                            <button id="btn-cancel-edit" onclick="app.cancelEdit()" class="btn-danger" style="display:none; margin-top: 10px; width: 100%;">Cancelar Edição</button>
+                        </div>
+                        <h3>Estoque Atual</h3>
+                        <table class="admin-table">
+                            <thead><tr><th>Foto</th><th>Nome</th><th>Preços</th><th>Ações</th></tr></thead>
+                            <tbody id="admin-products-list"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Aba: Vendas -->
+                    <div id="admin-tab-orders" class="admin-tab" style="display:none;">
+                        <h2>Gerenciamento de Vendas</h2>
+                        <table class="admin-table">
+                            <thead><tr><th>ID/Data</th><th>Cliente</th><th>Total</th><th>Status</th><th>Comprovante</th><th>Ação</th></tr></thead>
+                            <tbody id="admin-orders-list"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Aba: Configurações -->
+                    <div id="admin-tab-settings" class="admin-tab" style="display:none;">
+                        <h2>Configurações do Sistema</h2>
+                        <div class="form-group">
+                            <label>Sua Chave PIX (Para recebimento):</label>
+                            <input type="text" id="admin-pix-key" placeholder="Ex: e-mail, cpf, cnpj ou telefone">
+                            <button onclick="app.savePixKey()" class="btn-primary">Salvar Chave PIX</button>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal de Galeria de Fotos -->
+    <div id="gallery-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button class="modal-close" onclick="app.closeGallery()"><i class="fas fa-times"></i></button>
+            <button class="modal-prev" onclick="app.prevImage()"><i class="fas fa-chevron-left"></i></button>
+            <img id="gallery-img" src="">
+            <button class="modal-next" onclick="app.nextImage()"><i class="fas fa-chevron-right"></i></button>
+            <div id="gallery-counter" class="gallery-counter">1/1</div>
+        </div>
+    </div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

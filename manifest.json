@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "Click Premium",
+  "short_name": "Click Premium",
+  "description": "Sistema",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#1a252f",
+  "theme_color": "#1a252f",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
