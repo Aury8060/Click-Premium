@@ -27,6 +27,9 @@ const state = {
     salesChart: null
 };
 
+// ==========================================
+// ROTEADOR E UI
+// ==========================================
 function showView(viewId) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     const viewElement = document.getElementById('view-' + viewId);
@@ -48,20 +51,16 @@ function updateNavbar() {
     if (state.currentUser) {
         userBtn.innerHTML = '<i class="fas fa-user-check"></i> ' + state.currentUser.name.split(' ')[0];
         userBtn.onclick = () => showView('cart');
-        ordersBtn.style.display = 'inline-block';
+        if(ordersBtn) ordersBtn.style.display = 'inline-block';
     } else {
         userBtn.innerHTML = '<i class="fas fa-user"></i> Entrar';
         userBtn.onclick = () => showView('login');
-        ordersBtn.style.display = 'none';
+        if(ordersBtn) ordersBtn.style.display = 'none';
     }
 
     if (state.isAdminLoggedIn) {
         adminBtn.style.color = "var(--primary)";
         adminLogoutBtn.style.display = "inline-block";
-        if(document.querySelector('.view.active') && document.querySelector('.view.active').id === 'view-admin-login') {
-            showView('admin-panel');
-            showAdminTab('dash');
-        }
     } else {
         adminBtn.style.color = "#94a3b8";
         adminLogoutBtn.style.display = "none";
@@ -79,7 +78,7 @@ function fileToBase64(file) {
 function sanitizeEmail(email) { return btoa(email); }
 
 // ==========================================
-// CATÁLOGO E PRODUTOS
+// BANCO DE DADOS GLOBAL (PRODUTOS E VENDAS)
 // ==========================================
 onValue(ref(db, 'estoque'), (snapshot) => {
     state.products = snapshot.val() || {};
@@ -96,6 +95,9 @@ onValue(ref(db, 'vendas'), (snapshot) => {
     }
 });
 
+// ==========================================
+// CATÁLOGO E FILTROS
+// ==========================================
 function renderCategoryButtons() {
     const categories = new Set(['Todos']);
     Object.values(state.products).forEach(p => {
@@ -128,7 +130,7 @@ function filterProducts() {
     });
 
     if(filtered.length === 0) {
-        grid.innerHTML = '<p>Nenhum produto encontrado.</p>';
+        grid.innerHTML = '<p>Nenhum produto encontrado com estes filtros.</p>';
         return;
     }
 
@@ -155,9 +157,7 @@ function filterProducts() {
 
             if (firstVar.colors && firstVar.colors.length > 0) {
                 let colorsList = "";
-                firstVar.colors.forEach(c => {
-                    colorsList += '<option value="' + c + '">' + c + '</option>';
-                });
+                firstVar.colors.forEach(c => { colorsList += '<option value="' + c + '">' + c + '</option>'; });
                 colorHtml = '<select id="select-color-' + id + '" class="variant-select color-select">' + colorsList + '</select>';
             } else {
                 colorHtml = '<select id="select-color-' + id + '" class="variant-select color-select" style="display:none;"><option value="">Padrão</option></select>';
@@ -272,9 +272,9 @@ function toggleClientAuthMode() {
 }
 
 async function registerClient() {
-    const name = document.getElementById('reg-name').value;
-    const email = document.getElementById('reg-email').value;
-    const phone = document.getElementById('reg-phone').value;
+    const name = document.getElementById('reg-name').value.trim();
+    const email = document.getElementById('reg-email').value.trim();
+    const phone = document.getElementById('reg-phone').value.trim();
     const address = document.getElementById('reg-address').value;
     const password = document.getElementById('reg-pass').value;
 
@@ -282,7 +282,7 @@ async function registerClient() {
     const clientId = sanitizeEmail(email);
     const clientData = { name, email, phone, address, password };
 
-    await set(ref(db, `clientes/${clientId}`), clientData);
+    await set(ref(db, 'clientes/' + clientId), clientData);
     state.currentUser = clientData;
     localStorage.setItem('cellCatalogUser', JSON.stringify(clientData));
     alert("Cadastro realizado!");
@@ -290,9 +290,9 @@ async function registerClient() {
 }
 
 async function loginClient() {
-    const email = document.getElementById('cli-email').value;
-    const pass = document.getElementById('cli-pass').value;
-    const snapshot = await get(ref(db, `clientes/${sanitizeEmail(email)}`));
+    const email = document.getElementById('cli-email').value.trim();
+    const pass = document.getElementById('cli-pass').value.trim();
+    const snapshot = await get(ref(db, 'clientes/' + sanitizeEmail(email)));
     
     if (snapshot.exists() && snapshot.val().password === pass) {
         state.currentUser = snapshot.val();
@@ -318,9 +318,9 @@ function loadClientOrders() {
     myOrders.forEach(([id, o]) => {
         const itemsList = o.items.map(i => i.name).join('<br> - ');
         
-        let statusBadge = `<span class="badge badge-status" style="background:#e2e8f0; color:#333;">${o.status}</span>`;
-        if(o.status.includes('Despacho') || o.status.includes('Caminho')) statusBadge = `<span class="badge badge-status" style="background:var(--info); color:white;">${o.status}</span>`;
-        if(o.status.includes('Concluído') || o.status.includes('Recebido')) statusBadge = `<span class="badge badge-status" style="background:var(--success); color:white;">${o.status}</span>`;
+        let statusBadge = '<span class="badge badge-status" style="background:#e2e8f0; color:#333;">' + o.status + '</span>';
+        if(o.status.includes('Despacho') || o.status.includes('Caminho')) statusBadge = '<span class="badge badge-status" style="background:var(--info); color:white;">' + o.status + '</span>';
+        if(o.status.includes('Concluído') || o.status.includes('Recebido')) statusBadge = '<span class="badge badge-status" style="background:var(--success); color:white;">' + o.status + '</span>';
 
         let extraAction = '';
         if(o.status === 'Despachado' || o.status === 'Pagamento Aprovado - Em Despacho') {
@@ -352,8 +352,8 @@ function loadClientOrders() {
 }
 
 function clientConfirmReceipt(orderId) {
-    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O administrador será notificado para concluir a venda.")) {
-        update(ref(db, `vendas/${orderId}`), { status: "Entregue pelo Cliente" });
+    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O administrador será notificado.")) {
+        update(ref(db, 'vendas/' + orderId), { status: "Entregue pelo Cliente" });
         alert("Obrigado por confirmar! Sua compra foi finalizada com sucesso.");
     }
 }
@@ -404,7 +404,7 @@ function crc16(payload) {
 }
 
 function generatePixPayload(pixKey, amount) {
-    const f = (id, val) => { const str = String(val); return `${id}${str.length.toString().padStart(2, '0')}${str}`; };
+    const f = (id, val) => { const str = String(val); return id + str.length.toString().padStart(2, '0') + str; };
     let p = "000201";
     p += f("26", f("00", "br.gov.bcb.pix") + f("01", pixKey));
     p += f("52", "0000"); p += f("53", "986"); p += f("54", amount.toFixed(2));
@@ -426,7 +426,7 @@ async function startCheckout() {
     
     document.getElementById('pix-total-display').innerText = total.toFixed(2);
     document.getElementById('pix-payload-input').value = pixPayload;
-    document.getElementById('pix-qrcode').src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(pixPayload)}`;
+    document.getElementById('pix-qrcode').src = 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(pixPayload);
     
     document.getElementById('checkout-step').style.display = 'block';
     document.getElementById('btn-start-checkout').style.display = 'none';
@@ -466,23 +466,37 @@ async function finishCheckout() {
 // ÁREA DO ADMINISTRADOR
 // ==========================================
 function loginAdmin() {
-    const u = document.getElementById('admin-user').value;
-    const p = document.getElementById('admin-pass').value;
+    // .trim() evita erro se digitar espaço sem querer. .toLowerCase() ignora maiúsculas
+    const u = document.getElementById('admin-user').value.trim().toLowerCase();
+    const p = document.getElementById('admin-pass').value.trim();
+    
     if(u === 'au.costa' && p === '80605276') {
         state.isAdminLoggedIn = true;
         localStorage.setItem('cellCatalogAdmin', 'true');
-        updateNavbar();
+        
+        // Exibe o painel com segurança sem criar loop
         showView('admin-panel');
         showAdminTab('dash');
+        
+        // Força o carregamento dos dados das tabelas
+        loadAdminProducts();
+        loadAdminOrders();
+
         get(ref(db, 'config/pixKey')).then(snap => {
             if(snap.exists()) document.getElementById('admin-pix-key').value = snap.val();
         });
-    } else { alert("Acesso negado."); }
+        
+        updateNavbar();
+    } else { 
+        alert("Acesso negado. Verifique se o usuário ou senha contêm espaços em branco ou estão incorretos."); 
+    }
 }
+
 function logoutAdmin() {
     state.isAdminLoggedIn = false;
     localStorage.removeItem('cellCatalogAdmin');
-    updateNavbar(); showView('catalog');
+    updateNavbar(); 
+    showView('catalog');
 }
 
 function showAdminTab(tab) {
@@ -539,14 +553,14 @@ function loadAdminOrders() {
 function approveOrder(id) {
     const dias = prompt("Em quantos dias o pedido será entregue ao cliente? (Apenas número)");
     if(dias && !isNaN(dias)) {
-        update(ref(db, `vendas/${id}`), { status: "Despachado", deliveryDays: dias });
+        update(ref(db, 'vendas/' + id), { status: "Despachado", deliveryDays: dias });
         alert("Status atualizado! O cliente verá a previsão de entrega no painel dele.");
     }
 }
 
 function completeOrder(id) {
     if(confirm("Deseja realmente marcar essa venda como CONCLUÍDA? Ela sairá desta tela e irá para o histórico do Dashboard.")) {
-        update(ref(db, `vendas/${id}`), { status: "Concluído" });
+        update(ref(db, 'vendas/' + id), { status: "Concluído" });
     }
 }
 
@@ -558,24 +572,29 @@ function filterDashboard() {
     let endTimestamp = Number.MAX_SAFE_INTEGER;
 
     if(startInput) {
-        const s = new Date(startInput); s.setHours(0,0,0,0); startTimestamp = s.getTime();
+        // T00:00:00 força o horário local correto
+        const s = new Date(startInput + 'T00:00:00'); 
+        startTimestamp = s.getTime();
     }
     if(endInput) {
-        const e = new Date(endInput); e.setHours(23,59,59,999); endTimestamp = e.getTime();
+        const e = new Date(endInput + 'T23:59:59'); 
+        endTimestamp = e.getTime();
     }
 
-    const completedOrders = Object.values(state.allOrders).filter(o => 
-        o.status === "Concluído" && o.timestamp >= startTimestamp && o.timestamp <= endTimestamp
-    );
+    const completedOrders = Object.values(state.allOrders).filter(o => {
+        if(o.status !== "Concluído") return false;
+        const ts = o.timestamp || 0; // Proteção para pedidos antigos
+        return ts >= startTimestamp && ts <= endTimestamp;
+    });
 
     let totalRevenue = 0;
     const salesByDate = {};
     const historyTbody = document.getElementById('dash-history-list');
     historyTbody.innerHTML = '';
 
-    completedOrders.sort((a,b) => b.timestamp - a.timestamp).forEach(o => {
+    completedOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)).forEach(o => {
         totalRevenue += o.total;
-        const dateKey = o.dateStr || new Date(o.timestamp).toLocaleDateString('pt-BR');
+        const dateKey = o.dateStr || "Data Antiga";
         salesByDate[dateKey] = (salesByDate[dateKey] || 0) + o.total;
 
         historyTbody.innerHTML += `
@@ -596,6 +615,11 @@ function filterDashboard() {
 }
 
 function renderChart(dataObj) {
+    if (typeof Chart === 'undefined') {
+        console.warn("Biblioteca de Gráficos não carregou ainda.");
+        return;
+    }
+
     const ctx = document.getElementById('salesChart');
     const labels = Object.keys(dataObj).reverse(); 
     const data = labels.map(l => dataObj[l]);
@@ -641,15 +665,19 @@ async function addVariant() {
     const price = parseFloat(document.getElementById('var-price').value);
     const mainImg = document.getElementById('var-main-img').value.trim();
     if(!storage || isNaN(price)) return alert("Armazenamento e Preço são obrigatórios para salvar a variação!");
+    
     let extraImages = [...state.currentVarBuilder.extraLinks];
     const fileInput = document.getElementById('var-extra-img-file');
     if(fileInput.files.length > 0) {
         for(let i=0; i < fileInput.files.length; i++) extraImages.push(await fileToBase64(fileInput.files[i]));
     }
+    
     state.tempVariants.push({ size: storage, ram: ram, price: price, colors: [...state.currentVarBuilder.colors], mainImage: mainImg, extraImages: extraImages });
     state.currentVarBuilder = { colors: [], extraLinks: [] };
+    
     document.getElementById('var-storage').value = ''; document.getElementById('var-ram').value = ''; document.getElementById('var-price').value = '';
     document.getElementById('var-main-img').value = ''; document.getElementById('var-color-input').value = ''; document.getElementById('var-extra-img-link').value = ''; fileInput.value = '';
+    
     renderVarBuilderLists(); renderAdminVariants();
 }
 
@@ -675,6 +703,7 @@ async function saveProduct() {
     const globalFileInput = document.getElementById('prod-img');
     const globalUrlInput = document.getElementById('prod-img-url').value;
     const globalExtraFilesInput = document.getElementById('prod-imgs-extra');
+    
     if(!name) return alert("Preencha o Nome do produto!");
     if(state.tempVariants.length === 0) return alert("Adicione pelo menos UMA variação de armazenamento/preço na lista!");
 
@@ -688,9 +717,10 @@ async function saveProduct() {
     else if (globalExtraFilesInput.files.length > 0) {
         for(let i = 0; i < globalExtraFilesInput.files.length; i++) extraImages.push(await fileToBase64(globalExtraFilesInput.files[i]));
     }
+    
     const prodData = { name, category, specs, image: finalImage, extraImages, variants: state.tempVariants };
 
-    if(id) { await update(ref(db, `estoque/${id}`), prodData); alert("Produto atualizado!"); } 
+    if(id) { await update(ref(db, 'estoque/' + id), prodData); alert("Produto atualizado!"); } 
     else { await set(push(ref(db, 'estoque')), prodData); alert("Produto cadastrado!"); }
     cancelEdit(); 
 }
@@ -723,16 +753,17 @@ function cancelEdit() {
     document.getElementById('btn-cancel-edit').style.display = "none";
 }
 
-function deleteProduct(id) { if(confirm("Excluir este produto e todas suas variações?")) remove(ref(db, `estoque/${id}`)); }
+function deleteProduct(id) { if(confirm("Excluir este produto e todas suas variações?")) remove(ref(db, 'estoque/' + id)); }
+
 function loadAdminProducts() {
     const tbody = document.getElementById('admin-products-list'); tbody.innerHTML = '';
     Object.keys(state.products).forEach(id => {
         const p = state.products[id];
         let priceText = ""; let displayImg = p.image;
         if(p.variants && p.variants.length > 0) {
-            priceText = `R$ ${parseFloat(p.variants[0].price).toFixed(2)} <small>(+${p.variants.length-1} var.)</small>`;
+            priceText = 'R$ ' + parseFloat(p.variants[0].price).toFixed(2) + ' <small>(+' + (p.variants.length-1) + ' var.)</small>';
             if (p.variants[0].mainImage) displayImg = p.variants[0].mainImage;
-        } else { priceText = `R$ ${parseFloat(p.price || 0).toFixed(2)}`; }
+        } else { priceText = 'R$ ' + parseFloat(p.price || 0).toFixed(2); }
         tbody.innerHTML += `
             <tr><td><img src="${displayImg}"></td><td>${p.name}<br><small>${p.category}</small></td><td>${priceText}</td>
             <td class="action-btns">
@@ -741,14 +772,22 @@ function loadAdminProducts() {
             </td></tr>`;
     });
 }
+
 function savePixKey() {
     const key = document.getElementById('admin-pix-key').value;
     set(ref(db, 'config/pixKey'), key); alert("Chave PIX atualizada com sucesso!");
 }
 
+// INICIALIZAÇÃO
 updateNavbar();
-if(!state.isAdminLoggedIn) showView('catalog');
-else updateNavbar(); 
+if(!state.isAdminLoggedIn) {
+    showView('catalog');
+} else {
+    showView('admin-panel');
+    showAdminTab('dash');
+    loadAdminProducts();
+    loadAdminOrders();
+}
 
 window.app = {
     showView, toggleClientAuthMode, registerClient, loginClient, loadClientOrders, clientConfirmReceipt,
