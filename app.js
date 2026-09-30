@@ -14,10 +14,26 @@ const firebaseConfig = {
 const appFirebase = initializeApp(firebaseConfig);
 const db = getDatabase(appFirebase);
 
+// ==========================================
+// SAAS: DETECÇÃO DA LOJA PELA URL E PERSISTÊNCIA
+// ==========================================
+const urlParams = new URLSearchParams(window.location.search);
+const CURRENT_STORE = urlParams.get('loja') || 'padrao'; // Se não tiver ?loja=, usa a padrao (sua loja raiz)
+
+// Função que roteia os dados para a raiz (se for sua loja) ou para a pasta da loja parceira
+const dbPath = (node) => CURRENT_STORE === 'padrao' ? node : 'lojas/' + CURRENT_STORE + '/' + node;
+
+// Chaves do navegador isoladas por loja para evitar conflito de carrinhos
+const CART_KEY = 'cellCart_' + CURRENT_STORE;
+const USER_KEY = 'cellUser_' + CURRENT_STORE;
+
 const state = {
-    cart: [],
-    currentUser: JSON.parse(localStorage.getItem('cellCatalogUser')) || null,
-    isAdminLoggedIn: localStorage.getItem('cellCatalogAdmin') === 'true',
+    cart: JSON.parse(localStorage.getItem(CART_KEY)) || [],
+    currentUser: JSON.parse(localStorage.getItem(USER_KEY)) || null,
+    
+    adminRole: localStorage.getItem('cellAdminRole'),
+    isAdminLoggedIn: localStorage.getItem('cellAdminRole') !== null,
+    
     products: {}, 
     allOrders: {},
     currentCategory: 'Todos',
@@ -28,6 +44,27 @@ const state = {
 };
 
 // ==========================================
+// SISTEMA DE NOTIFICAÇÕES (Substitui os alerts)
+// ==========================================
+function customAlert(title, message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-' + type;
+    
+    let icon = 'fa-info-circle';
+    if(type === 'success') icon = 'fa-check-circle';
+    if(type === 'error') icon = 'fa-exclamation-circle';
+
+    toast.innerHTML = '<i class="fas ' + icon + '"></i><div class="toast-content"><strong>' + title + '</strong><p>' + message + '</p></div>';
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'slideOutRight 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards';
+        setTimeout(() => toast.remove(), 500);
+    }, 4000);
+}
+
+// ==========================================
 // ROTEADOR E UI
 // ==========================================
 function showView(viewId) {
@@ -35,10 +72,25 @@ function showView(viewId) {
     const viewElement = document.getElementById('view-' + viewId);
     if (viewElement) viewElement.classList.add('active');
     
+    localStorage.setItem('lastAppView_' + CURRENT_STORE, viewId);
+    
     if(viewId === 'catalog') filterProducts(); 
     if(viewId === 'cart') renderCart();
     if(viewId === 'my-orders') loadClientOrders();
     updateNavbar();
+}
+
+function showAdminTab(tab) {
+    document.querySelectorAll('.admin-tab').forEach(t => t.style.display = 'none');
+    const targetTab = document.getElementById('admin-tab-' + tab);
+    if(targetTab) targetTab.style.display = 'block';
+    
+    localStorage.setItem('lastAdminTab_' + CURRENT_STORE, tab);
+    if(tab === 'dash') filterDashboard(); 
+}
+
+function updateCartStorage() {
+    localStorage.setItem(CART_KEY, JSON.stringify(state.cart));
 }
 
 function updateNavbar() {
@@ -47,6 +99,7 @@ function updateNavbar() {
     const adminBtn = document.getElementById('nav-admin-btn');
     const adminLogoutBtn = document.getElementById('nav-admin-logout');
     const ordersBtn = document.getElementById('nav-orders-btn');
+    const usersTabBtn = document.getElementById('nav-tab-users');
 
     if (state.currentUser) {
         userBtn.innerHTML = '<i class="fas fa-user-check"></i> ' + state.currentUser.name.split(' ')[0];
@@ -61,9 +114,13 @@ function updateNavbar() {
     if (state.isAdminLoggedIn) {
         adminBtn.style.color = "var(--primary)";
         adminLogoutBtn.style.display = "inline-block";
+        if(state.adminRole === 'superadmin' && usersTabBtn) {
+            usersTabBtn.style.display = 'block';
+        }
     } else {
         adminBtn.style.color = "#94a3b8";
         adminLogoutBtn.style.display = "none";
+        if(usersTabBtn) usersTabBtn.style.display = 'none';
     }
 }
 
@@ -78,16 +135,34 @@ function fileToBase64(file) {
 function sanitizeEmail(email) { return btoa(email); }
 
 // ==========================================
-// BANCO DE DADOS GLOBAL (PRODUTOS E VENDAS)
+// BANCO DE DADOS & PERSONALIZAÇÃO DA LOJA
 // ==========================================
-onValue(ref(db, 'estoque'), (snapshot) => {
+onValue(ref(db, dbPath('config')), (snapshot) => {
+    if(snapshot.exists()) {
+        const cfg = snapshot.val();
+        if(cfg.storeName) {
+            document.querySelectorAll('.store-name-display').forEach(el => el.innerText = cfg.storeName);
+            document.title = cfg.storeName;
+            if(document.getElementById('admin-store-name')) document.getElementById('admin-store-name').value = cfg.storeName;
+        }
+        if(cfg.themeColor) {
+            document.documentElement.style.setProperty('--primary', cfg.themeColor);
+            if(document.getElementById('admin-theme-color')) document.getElementById('admin-theme-color').value = cfg.themeColor;
+        }
+        if(cfg.pixKey && document.getElementById('admin-pix-key')) {
+            document.getElementById('admin-pix-key').value = cfg.pixKey;
+        }
+    }
+});
+
+onValue(ref(db, dbPath('estoque')), (snapshot) => {
     state.products = snapshot.val() || {};
     renderCategoryButtons();
     filterProducts();
     if(state.isAdminLoggedIn) loadAdminProducts();
 });
 
-onValue(ref(db, 'vendas'), (snapshot) => {
+onValue(ref(db, dbPath('vendas')), (snapshot) => {
     state.allOrders = snapshot.val() || {};
     if(state.isAdminLoggedIn) {
         loadAdminOrders();
@@ -130,16 +205,14 @@ function filterProducts() {
     });
 
     if(filtered.length === 0) {
-        grid.innerHTML = '<p>Nenhum produto encontrado com estes filtros.</p>';
+        grid.innerHTML = '<p style="color: #64748b; font-size: 1.1rem;">Nenhum produto encontrado na loja no momento.</p>';
         return;
     }
 
     filtered.forEach(([id, p]) => {
         const imgAction = 'onclick="app.openGallery(\'' + id + '\')" title="Ver fotos"';
-        let optionsHtml = ''; 
-        let colorHtml = '';
-        let displayPrice = parseFloat(p.price) || 0; 
-        let displayImg = p.image;
+        let optionsHtml = ''; let colorHtml = '';
+        let displayPrice = parseFloat(p.price) || 0; let displayImg = p.image;
 
         if (p.variants && p.variants.length > 0) {
             const firstVar = p.variants[0];
@@ -226,7 +299,8 @@ function addToCartSelected(id) {
     }
 
     state.cart.push({ id, name: finalName, price: finalPrice });
-    alert(finalName + ' adicionado ao carrinho!');
+    updateCartStorage();
+    customAlert('Item Adicionado', finalName + ' está no seu carrinho.', 'success');
     updateNavbar();
 }
 
@@ -278,27 +352,30 @@ async function registerClient() {
     const address = document.getElementById('reg-address').value;
     const password = document.getElementById('reg-pass').value;
 
-    if(!name || !email || !password || !phone) return alert("Preencha os campos obrigatórios!");
+    if(!name || !email || !password || !phone) return customAlert("Aviso", "Preencha todos os campos obrigatórios!", "info");
     const clientId = sanitizeEmail(email);
     const clientData = { name, email, phone, address, password };
 
-    await set(ref(db, 'clientes/' + clientId), clientData);
+    await set(ref(db, dbPath('clientes/' + clientId)), clientData);
     state.currentUser = clientData;
-    localStorage.setItem('cellCatalogUser', JSON.stringify(clientData));
-    alert("Cadastro realizado!");
+    localStorage.setItem(USER_KEY, JSON.stringify(clientData));
+    customAlert("Bem-vindo!", "Cadastro realizado com sucesso.", "success");
     showView('catalog');
 }
 
 async function loginClient() {
     const email = document.getElementById('cli-email').value.trim();
     const pass = document.getElementById('cli-pass').value.trim();
-    const snapshot = await get(ref(db, 'clientes/' + sanitizeEmail(email)));
+    const snapshot = await get(ref(db, dbPath('clientes/' + sanitizeEmail(email))));
     
     if (snapshot.exists() && snapshot.val().password === pass) {
         state.currentUser = snapshot.val();
-        localStorage.setItem('cellCatalogUser', JSON.stringify(snapshot.val()));
+        localStorage.setItem(USER_KEY, JSON.stringify(snapshot.val()));
+        customAlert("Bem-vindo de volta!", "Login efetuado com sucesso.", "success");
         showView('catalog');
-    } else { alert("Email ou Senha incorretos!"); }
+    } else { 
+        customAlert("Acesso Negado", "Email ou senha incorretos na base de clientes desta loja.", "error"); 
+    }
 }
 
 function loadClientOrders() {
@@ -311,16 +388,17 @@ function loadClientOrders() {
         .reverse();
 
     if(myOrders.length === 0) {
-        list.innerHTML = '<p>Você ainda não fez nenhum pedido.</p>';
+        list.innerHTML = '<p>Você ainda não fez nenhum pedido nesta loja.</p>';
         return;
     }
 
     myOrders.forEach(([id, o]) => {
-        const itemsList = o.items.map(i => i.name).join('<br> - ');
+        let itemsHtml = "";
+        o.items.forEach(i => { itemsHtml += '<br> - ' + i.name; });
         
         let statusBadge = '<span class="badge badge-status" style="background:#e2e8f0; color:#333;">' + o.status + '</span>';
         if(o.status.includes('Despacho') || o.status.includes('Caminho')) statusBadge = '<span class="badge badge-status" style="background:var(--info); color:white;">' + o.status + '</span>';
-        if(o.status.includes('Concluído') || o.status.includes('Recebido')) statusBadge = '<span class="badge badge-status" style="background:var(--success); color:white;">' + o.status + '</span>';
+        if(o.status.includes('Concluído') || o.status.includes('Recebido') || o.status.includes('Entregue')) statusBadge = '<span class="badge badge-status" style="background:var(--success); color:white;">' + o.status + '</span>';
 
         let extraAction = '';
         if(o.status === 'Despachado' || o.status === 'Pagamento Aprovado - Em Despacho') {
@@ -343,7 +421,7 @@ function loadClientOrders() {
                     <div>${statusBadge}</div>
                 </div>
                 <div style="font-size: 0.9rem; color: #475569;">
-                    <strong>Produtos:</strong><br> - ${itemsList}
+                    <strong>Produtos:</strong>${itemsHtml}
                 </div>
                 ${extraAction}
             </div>
@@ -352,9 +430,9 @@ function loadClientOrders() {
 }
 
 function clientConfirmReceipt(orderId) {
-    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O administrador será notificado.")) {
-        update(ref(db, 'vendas/' + orderId), { status: "Entregue pelo Cliente" });
-        alert("Obrigado por confirmar! Sua compra foi finalizada com sucesso.");
+    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O lojista será notificado.")) {
+        update(ref(db, dbPath('vendas/' + orderId)), { status: "Entregue pelo Cliente" });
+        customAlert("Obrigado!", "Sua compra foi finalizada com sucesso.", "success");
     }
 }
 
@@ -367,7 +445,7 @@ function renderCart() {
     let total = 0;
     
     if(state.cart.length === 0) {
-        list.innerHTML = '<p>Seu carrinho está vazio.</p>';
+        list.innerHTML = '<p style="color: #64748b; font-size: 1.1rem;">Seu carrinho está vazio.</p>';
         document.getElementById('checkout-step').style.display = 'none';
         document.getElementById('btn-start-checkout').style.display = 'none';
     } else {
@@ -378,7 +456,7 @@ function renderCart() {
                     <span>${item.name}</span>
                     <div>
                         <span>R$ ${parseFloat(item.price).toFixed(2)}</span>
-                        <button onclick="app.removeFromCart(${index})" style="margin-left: 10px; color: red; border: none; background: none; cursor: pointer;">X</button>
+                        <button onclick="app.removeFromCart(${index})" style="margin-left: 10px; color: red; border: none; background: none; cursor: pointer; font-size: 1.2rem;"><i class="fas fa-trash-alt"></i></button>
                     </div>
                 </div>
             `;
@@ -388,7 +466,12 @@ function renderCart() {
     document.getElementById('cart-total-price').innerText = total.toFixed(2);
 }
 
-function removeFromCart(index) { state.cart.splice(index, 1); renderCart(); updateNavbar(); }
+function removeFromCart(index) { 
+    state.cart.splice(index, 1); 
+    updateCartStorage(); 
+    renderCart(); 
+    updateNavbar(); 
+}
 
 function crc16(payload) {
     let crc = 0xFFFF;
@@ -408,18 +491,18 @@ function generatePixPayload(pixKey, amount) {
     let p = "000201";
     p += f("26", f("00", "br.gov.bcb.pix") + f("01", pixKey));
     p += f("52", "0000"); p += f("53", "986"); p += f("54", amount.toFixed(2));
-    p += f("58", "BR"); p += f("59", "CLICK PREMIUM"); p += f("60", "CIDADE"); p += f("62", f("05", "***")); p += "6304";
+    p += f("58", "BR"); p += f("59", "LOJISTA"); p += f("60", "CIDADE"); p += f("62", f("05", "***")); p += "6304";
     p += crc16(p);
     return p;
 }
 
 async function startCheckout() {
     if(!state.currentUser) return showView('login');
-    if(state.cart.length === 0) return alert("Carrinho Vazio.");
+    if(state.cart.length === 0) return customAlert("Carrinho Vazio", "Adicione produtos primeiro.", "info");
     
-    const snap = await get(ref(db, 'config/pixKey'));
+    const snap = await get(ref(db, dbPath('config/pixKey')));
     let pixKey = snap.exists() ? snap.val() : "";
-    if(!pixKey) return alert("Erro: O lojista ainda não configurou uma chave PIX.");
+    if(!pixKey) return customAlert("Erro do Lojista", "A loja ainda não configurou uma chave PIX para receber.", "error");
 
     const total = state.cart.reduce((acc, item) => acc + parseFloat(item.price), 0);
     const pixPayload = generatePixPayload(pixKey, total);
@@ -435,12 +518,16 @@ async function startCheckout() {
 function copyPixPayload() {
     const input = document.getElementById('pix-payload-input');
     input.select(); input.setSelectionRange(0, 99999); 
-    navigator.clipboard.writeText(input.value).then(() => alert("Código PIX copiado!")).catch(() => alert("Erro ao copiar."));
+    navigator.clipboard.writeText(input.value).then(() => {
+        customAlert("Chave Copiada!", "Cole no aplicativo do seu banco para pagar.", "success");
+    }).catch(() => {
+        customAlert("Aviso", "Erro ao copiar, selecione o código manualmente.", "info");
+    });
 }
 
 async function finishCheckout() {
     const fileInput = document.getElementById('receipt-file');
-    if(fileInput.files.length === 0) return alert("Por favor, anexe o comprovante do PIX.");
+    if(fileInput.files.length === 0) return customAlert("Atenção", "Por favor, anexe o comprovante do PIX.", "error");
 
     const base64Receipt = await fileToBase64(fileInput.files[0]);
     const total = state.cart.reduce((acc, item) => acc + parseFloat(item.price), 0);
@@ -457,55 +544,158 @@ async function finishCheckout() {
         date: now.toLocaleString()
     };
 
-    await set(push(ref(db, 'vendas')), orderData);
-    alert("Pedido enviado! Acompanhe o status em 'Meus Pedidos'.");
-    state.cart = []; renderCart(); showView('my-orders');
+    await set(push(ref(db, dbPath('vendas'))), orderData);
+    customAlert("Pedido Recebido!", "O administrador validará o seu PIX. Acompanhe em Meus Pedidos.", "success");
+    
+    state.cart = []; 
+    updateCartStorage(); 
+    renderCart(); 
+    showView('my-orders');
 }
 
 // ==========================================
 // ÁREA DO ADMINISTRADOR
 // ==========================================
-function loginAdmin() {
-    // .trim() evita erro se digitar espaço sem querer. .toLowerCase() ignora maiúsculas
+async function loginAdmin() {
     const u = document.getElementById('admin-user').value.trim().toLowerCase();
     const p = document.getElementById('admin-pass').value.trim();
     
-    if(u === 'au.costa' && p === '80605276') {
-        state.isAdminLoggedIn = true;
-        localStorage.setItem('cellCatalogAdmin', 'true');
-        
-        // Exibe o painel com segurança sem criar loop
-        showView('admin-panel');
-        showAdminTab('dash');
-        
-        // Força o carregamento dos dados das tabelas
-        loadAdminProducts();
-        loadAdminOrders();
+    if(!u || !p) return customAlert("Aviso", "Preencha usuário e senha.", "info");
 
-        get(ref(db, 'config/pixKey')).then(snap => {
-            if(snap.exists()) document.getElementById('admin-pix-key').value = snap.val();
-        });
-        
-        updateNavbar();
-    } else { 
-        alert("Acesso negado. Verifique se o usuário ou senha contêm espaços em branco ou estão incorretos."); 
+    if(u === 'au.costa' && p === '80605276') {
+        processAdminLogin('superadmin');
+    } else {
+        const snap = await get(ref(db, 'global_admins/' + btoa(u)));
+        if (snap.exists() && snap.val().password === p) {
+            const adminData = snap.val();
+            if(adminData.storeId !== CURRENT_STORE) {
+                customAlert("Redirecionando...", "Indo para o painel da sua loja.", "info");
+                setTimeout(() => window.location.href = '?loja=' + adminData.storeId, 1500);
+                return;
+            }
+            processAdminLogin('admin');
+        } else {
+            customAlert("Acesso Negado", "Usuário ou senha inválidos.", "error");
+        }
     }
+}
+
+function processAdminLogin(role) {
+    state.isAdminLoggedIn = true;
+    state.adminRole = role;
+    localStorage.setItem('cellAdminRole', role);
+    
+    updateNavbar();
+    showView('admin-panel');
+    showAdminTab('dash');
+    loadAdminProducts();
+    loadAdminOrders();
+
+    if(role === 'superadmin') {
+        const usrBtn = document.getElementById('nav-tab-users');
+        if(usrBtn) usrBtn.style.display = 'block';
+        loadSystemUsers();
+    } else {
+        const usrBtn = document.getElementById('nav-tab-users');
+        if(usrBtn) usrBtn.style.display = 'none';
+    }
+
+    get(ref(db, dbPath('config/pixKey'))).then(snap => {
+        if(snap.exists() && document.getElementById('admin-pix-key')) document.getElementById('admin-pix-key').value = snap.val();
+    });
 }
 
 function logoutAdmin() {
     state.isAdminLoggedIn = false;
-    localStorage.removeItem('cellCatalogAdmin');
+    state.adminRole = null;
+    localStorage.removeItem('cellAdminRole');
     updateNavbar(); 
     showView('catalog');
 }
 
-function showAdminTab(tab) {
-    document.querySelectorAll('.admin-tab').forEach(t => t.style.display = 'none');
-    const targetTab = document.getElementById('admin-tab-' + tab);
-    if(targetTab) targetTab.style.display = 'block';
-    
-    if(tab === 'dash') filterDashboard(); 
+function saveStoreConfig() {
+    const pix = document.getElementById('admin-pix-key').value.trim();
+    const name = document.getElementById('admin-store-name').value.trim();
+    const color = document.getElementById('admin-theme-color').value;
+    update(ref(db, dbPath('config')), { pixKey: pix, storeName: name, themeColor: color });
+    customAlert("Pronto!", "Configurações da loja salvas com sucesso.", "success");
 }
+
+// === SaaS (Gestão de Lojas) ===
+function createTenantStore() {
+    const name = document.getElementById('sys-store-name').value.trim();
+    const slug = document.getElementById('sys-store-slug').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const u = document.getElementById('sys-user').value.trim().toLowerCase();
+    const p = document.getElementById('sys-pass').value.trim();
+    
+    if(!name || !slug || !u || !p) return customAlert("Erro", "Preencha todos os campos da nova loja.", "error");
+    if(u === 'au.costa') return customAlert("Inválido", "Este usuário é reservado.", "error");
+
+    set(ref(db, 'global_admins/' + btoa(u)), { username: u, password: p, storeId: slug, storeName: name });
+    set(ref(db, 'lojas/' + slug + '/config'), { storeName: name, themeColor: '#2563eb' });
+
+    customAlert("Loja Criada!", "O link da loja é: ?loja=" + slug, "success");
+    
+    document.getElementById('sys-store-name').value = '';
+    document.getElementById('sys-store-slug').value = '';
+    document.getElementById('sys-user').value = '';
+    document.getElementById('sys-pass').value = '';
+    loadSystemUsers();
+}
+
+function loadSystemUsers() {
+    onValue(ref(db, 'global_admins'), snap => {
+        const tbody = document.getElementById('admin-users-list');
+        if(!tbody) return;
+        tbody.innerHTML = '';
+        if(snap.exists()) {
+            const admins = snap.val();
+            Object.keys(admins).forEach(key => {
+                const admin = admins[key];
+                tbody.innerHTML += `
+                    <tr>
+                        <td><strong>${admin.storeName}</strong></td>
+                        <td>?loja=${admin.storeId}</td>
+                        <td>${admin.username}</td>
+                        <td><button onclick="app.deleteTenantStore('${key}')" class="btn-danger"><i class="fas fa-trash"></i></button></td>
+                    </tr>
+                `;
+            });
+        }
+    });
+}
+
+function deleteTenantStore(key) {
+    if(confirm("Deseja deletar permanentemente o acesso desse lojista?")) {
+        remove(ref(db, 'global_admins/' + key));
+        customAlert("Excluído", "Permissão removida com sucesso.", "info");
+    }
+}
+
+// === Importar Produtos em JSON ===
+function importProductsJSON() {
+    const fileInput = document.getElementById('import-json-file');
+    if(fileInput.files.length === 0) return customAlert("Atenção", "Selecione um arquivo .json", "info");
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        try {
+            const data = JSON.parse(e.target.result);
+            let count = 0;
+            if (Array.isArray(data)) {
+                for(let item of data) { await set(push(ref(db, dbPath('estoque'))), item); count++; }
+            } else if (typeof data === 'object') {
+                for(let key in data) { await set(ref(db, dbPath('estoque/' + key)), data[key]); count++; }
+            }
+            customAlert("Upload Concluído", count + " produtos foram importados com sucesso!", "success");
+            fileInput.value = '';
+        } catch (err) {
+            customAlert("Erro no Arquivo", "Não foi possível ler o JSON. Verifique o formato.", "error");
+        }
+    };
+    reader.readAsText(fileInput.files[0]);
+}
+
 
 function openReceipt(base64) {
     document.getElementById('receipt-img').src = base64;
@@ -514,25 +704,27 @@ function openReceipt(base64) {
 
 function loadAdminOrders() {
     const tbody = document.getElementById('admin-orders-list');
+    if(!tbody) return;
     tbody.innerHTML = '';
     
     const activeOrders = Object.entries(state.allOrders).filter(([id, o]) => o.status !== "Concluído").reverse();
 
     if(activeOrders.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5">Nenhuma venda pendente/em andamento no momento.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5">Nenhuma venda em andamento no momento.</td></tr>';
         return;
     }
 
     activeOrders.forEach(([id, o]) => {
-        const itemsList = o.items.map(i => i.name).join('<br>- ');
+        let itemsHtml = "";
+        o.items.forEach(i => { itemsHtml += '<br>- ' + i.name; });
         
         let actionBtn = '';
         if (o.status === "Aguardando Validação") {
-            actionBtn = `<button onclick="app.approveOrder('${id}')" class="btn-primary" style="margin-bottom:5px;"><i class="fas fa-truck"></i> Aprovar e Informar Despacho</button>`;
+            actionBtn = `<button onclick="app.approveOrder('${id}')" class="btn-primary" style="margin-bottom:5px;"><i class="fas fa-truck"></i> Aprovar/Despachar</button>`;
         } else if (o.status === "Entregue pelo Cliente") {
             actionBtn = `<button onclick="app.completeOrder('${id}')" class="btn-success"><i class="fas fa-check-double"></i> Concluir Venda</button>`;
         } else {
-            actionBtn = `<span style="font-size:0.85rem; color:#64748b;">Aguardando ação do cliente...</span>`;
+            actionBtn = `<span style="font-size:0.85rem; color:#64748b;">Aguardando o cliente...</span>`;
         }
 
         tbody.innerHTML += `
@@ -540,10 +732,7 @@ function loadAdminOrders() {
                 <td><small>${o.dateStr || o.date}</small></td>
                 <td><strong>${o.client.name}</strong><br><small>${o.client.phone}</small></td>
                 <td><strong style="color:var(--success);">R$ ${o.total.toFixed(2)}</strong></td>
-                <td>
-                    <b>${o.status}</b><br>
-                    <a href="#" onclick="app.openReceipt('${o.receipt}')" style="font-size:0.85rem;">Ver Comprovante</a>
-                </td>
+                <td><b>${o.status}</b><br><a href="#" onclick="app.openReceipt('${o.receipt}')" style="font-size:0.85rem;">Ver Comprovante</a></td>
                 <td class="action-btns">${actionBtn}</td>
             </tr>
         `;
@@ -551,39 +740,29 @@ function loadAdminOrders() {
 }
 
 function approveOrder(id) {
-    const dias = prompt("Em quantos dias o pedido será entregue ao cliente? (Apenas número)");
+    const dias = prompt("Previsão de entrega (Apenas números, em dias):");
     if(dias && !isNaN(dias)) {
-        update(ref(db, 'vendas/' + id), { status: "Despachado", deliveryDays: dias });
-        alert("Status atualizado! O cliente verá a previsão de entrega no painel dele.");
+        update(ref(db, dbPath('vendas/' + id)), { status: "Despachado", deliveryDays: dias });
+        customAlert("Despachado", "Cliente notificado da previsão.", "success");
     }
 }
 
 function completeOrder(id) {
-    if(confirm("Deseja realmente marcar essa venda como CONCLUÍDA? Ela sairá desta tela e irá para o histórico do Dashboard.")) {
-        update(ref(db, 'vendas/' + id), { status: "Concluído" });
+    if(confirm("Confirmar a conclusão? O pedido irá para o Histórico de Vendas do Dashboard.")) {
+        update(ref(db, dbPath('vendas/' + id)), { status: "Concluído" });
     }
 }
 
 function filterDashboard() {
     const startInput = document.getElementById('dash-start').value;
     const endInput = document.getElementById('dash-end').value;
-    
-    let startTimestamp = 0;
-    let endTimestamp = Number.MAX_SAFE_INTEGER;
-
-    if(startInput) {
-        // T00:00:00 força o horário local correto
-        const s = new Date(startInput + 'T00:00:00'); 
-        startTimestamp = s.getTime();
-    }
-    if(endInput) {
-        const e = new Date(endInput + 'T23:59:59'); 
-        endTimestamp = e.getTime();
-    }
+    let startTimestamp = 0; let endTimestamp = Number.MAX_SAFE_INTEGER;
+    if(startInput) { const s = new Date(startInput + 'T00:00:00'); startTimestamp = s.getTime(); }
+    if(endInput) { const e = new Date(endInput + 'T23:59:59'); endTimestamp = e.getTime(); }
 
     const completedOrders = Object.values(state.allOrders).filter(o => {
         if(o.status !== "Concluído") return false;
-        const ts = o.timestamp || 0; // Proteção para pedidos antigos
+        const ts = o.timestamp || 0; 
         return ts >= startTimestamp && ts <= endTimestamp;
     });
 
@@ -596,12 +775,15 @@ function filterDashboard() {
         totalRevenue += o.total;
         const dateKey = o.dateStr || "Data Antiga";
         salesByDate[dateKey] = (salesByDate[dateKey] || 0) + o.total;
+        
+        let itemsHist = "";
+        o.items.forEach(i => { itemsHist += i.name + ", "; });
 
         historyTbody.innerHTML += `
             <tr>
                 <td>${dateKey}</td>
                 <td>${o.client.name} <br> <small>${o.client.phone}</small></td>
-                <td><small>${o.items.map(i => i.name).join(', ')}</small></td>
+                <td><small>${itemsHist}</small></td>
                 <td><strong style="color:var(--success);">R$ ${o.total.toFixed(2)}</strong></td>
             </tr>
         `;
@@ -615,11 +797,7 @@ function filterDashboard() {
 }
 
 function renderChart(dataObj) {
-    if (typeof Chart === 'undefined') {
-        console.warn("Biblioteca de Gráficos não carregou ainda.");
-        return;
-    }
-
+    if (typeof Chart === 'undefined') return;
     const ctx = document.getElementById('salesChart');
     const labels = Object.keys(dataObj).reverse(); 
     const data = labels.map(l => dataObj[l]);
@@ -629,7 +807,7 @@ function renderChart(dataObj) {
         type: 'bar',
         data: {
             labels: labels.length > 0 ? labels : ['Sem dados'],
-            datasets: [{ label: 'Faturamento (R$)', data: data.length > 0 ? data : [0], backgroundColor: '#2563eb', borderRadius: 4 }]
+            datasets: [{ label: 'Faturamento (R$)', data: data.length > 0 ? data : [0], backgroundColor: 'var(--primary)', borderRadius: 4 }]
         },
         options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
     });
@@ -664,7 +842,7 @@ async function addVariant() {
     const ram = document.getElementById('var-ram').value.trim();
     const price = parseFloat(document.getElementById('var-price').value);
     const mainImg = document.getElementById('var-main-img').value.trim();
-    if(!storage || isNaN(price)) return alert("Armazenamento e Preço são obrigatórios para salvar a variação!");
+    if(!storage || isNaN(price)) return customAlert("Atenção", "Preço e armazenamento são obrigatórios.", "info");
     
     let extraImages = [...state.currentVarBuilder.extraLinks];
     const fileInput = document.getElementById('var-extra-img-file');
@@ -704,8 +882,8 @@ async function saveProduct() {
     const globalUrlInput = document.getElementById('prod-img-url').value;
     const globalExtraFilesInput = document.getElementById('prod-imgs-extra');
     
-    if(!name) return alert("Preencha o Nome do produto!");
-    if(state.tempVariants.length === 0) return alert("Adicione pelo menos UMA variação de armazenamento/preço na lista!");
+    if(!name) return customAlert("Atenção", "Preencha o Nome do produto!", "error");
+    if(state.tempVariants.length === 0) return customAlert("Atenção", "Adicione ao menos uma variação.", "error");
 
     let finalImage = "";
     if(globalUrlInput) finalImage = globalUrlInput;
@@ -720,8 +898,8 @@ async function saveProduct() {
     
     const prodData = { name, category, specs, image: finalImage, extraImages, variants: state.tempVariants };
 
-    if(id) { await update(ref(db, 'estoque/' + id), prodData); alert("Produto atualizado!"); } 
-    else { await set(push(ref(db, 'estoque')), prodData); alert("Produto cadastrado!"); }
+    if(id) { await update(ref(db, dbPath('estoque/' + id)), prodData); customAlert("Pronto!", "Produto atualizado.", "success"); } 
+    else { await set(push(ref(db, dbPath('estoque'))), prodData); customAlert("Pronto!", "Produto cadastrado.", "success"); }
     cancelEdit(); 
 }
 
@@ -747,52 +925,60 @@ function cancelEdit() {
     document.getElementById('edit-prod-id').value = ''; document.getElementById('prod-name').value = '';
     document.getElementById('prod-category').value = ''; document.getElementById('prod-specs').value = '';
     document.getElementById('prod-img').value = ''; document.getElementById('prod-img-url').value = ''; document.getElementById('prod-imgs-extra').value = '';
+    
     state.tempVariants = []; state.currentVarBuilder = { colors: [], extraLinks: [] };
     renderAdminVariants(); renderVarBuilderLists();
+
     document.getElementById('btn-save-prod').innerText = "Finalizar Cadastro do Produto";
     document.getElementById('btn-cancel-edit').style.display = "none";
 }
 
-function deleteProduct(id) { if(confirm("Excluir este produto e todas suas variações?")) remove(ref(db, 'estoque/' + id)); }
+function deleteProduct(id) { if(confirm("Excluir este produto e todas suas variações?")) remove(ref(db, dbPath('estoque/' + id))); }
 
 function loadAdminProducts() {
     const tbody = document.getElementById('admin-products-list'); tbody.innerHTML = '';
     Object.keys(state.products).forEach(id => {
         const p = state.products[id];
         let priceText = ""; let displayImg = p.image;
+
         if(p.variants && p.variants.length > 0) {
             priceText = 'R$ ' + parseFloat(p.variants[0].price).toFixed(2) + ' <small>(+' + (p.variants.length-1) + ' var.)</small>';
             if (p.variants[0].mainImage) displayImg = p.variants[0].mainImage;
         } else { priceText = 'R$ ' + parseFloat(p.price || 0).toFixed(2); }
+
         tbody.innerHTML += `
-            <tr><td><img src="${displayImg}"></td><td>${p.name}<br><small>${p.category}</small></td><td>${priceText}</td>
-            <td class="action-btns">
-                <button onclick="app.editProduct('${id}')" class="btn-warning" title="Editar"><i class="fas fa-edit"></i></button>
-                <button onclick="app.deleteProduct('${id}')" class="btn-danger" title="Excluir"><i class="fas fa-trash"></i></button>
-            </td></tr>`;
+            <tr>
+                <td><img src="${displayImg}"></td>
+                <td>${p.name}<br><small>${p.category}</small></td>
+                <td>${priceText}</td>
+                <td class="action-btns">
+                    <button onclick="app.editProduct('${id}')" class="btn-warning" title="Editar"><i class="fas fa-edit"></i></button>
+                    <button onclick="app.deleteProduct('${id}')" class="btn-danger" title="Excluir"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>
+        `;
     });
 }
 
-function savePixKey() {
-    const key = document.getElementById('admin-pix-key').value;
-    set(ref(db, 'config/pixKey'), key); alert("Chave PIX atualizada com sucesso!");
-}
+// INICIALIZAÇÃO E PERSISTÊNCIA DE TELAS
+const savedAppView = localStorage.getItem('lastAppView_' + CURRENT_STORE) || 'catalog';
 
-// INICIALIZAÇÃO
-updateNavbar();
-if(!state.isAdminLoggedIn) {
-    showView('catalog');
+if(state.isAdminLoggedIn) {
+    if(savedAppView === 'admin-panel') {
+        const savedTab = localStorage.getItem('lastAdminTab_' + CURRENT_STORE) || 'dash';
+        showView('admin-panel');
+        showAdminTab(savedTab);
+    } else { showView(savedAppView); }
 } else {
-    showView('admin-panel');
-    showAdminTab('dash');
-    loadAdminProducts();
-    loadAdminOrders();
+    if(savedAppView === 'admin-panel' || savedAppView === 'admin-login') showView('catalog'); 
+    else showView(savedAppView);
 }
 
 window.app = {
     showView, toggleClientAuthMode, registerClient, loginClient, loadClientOrders, clientConfirmReceipt,
     addToCartSelected, removeFromCart, startCheckout, finishCheckout, filterProducts, changeProductPrice,
-    loginAdmin, logoutAdmin, showAdminTab, saveProduct, editProduct, cancelEdit, deleteProduct, approveOrder, completeOrder, openReceipt, savePixKey, filterDashboard,
+    loginAdmin, logoutAdmin, showAdminTab, saveProduct, editProduct, cancelEdit, deleteProduct, approveOrder, completeOrder, openReceipt, saveStoreConfig, filterDashboard,
     openGallery, closeGallery, prevImage, nextImage, addVariant, removeVariant,
-    addVarColor, removeVarColor, addVarExtraLink, removeVarExtraLink, copyPixPayload
+    addVarColor, removeVarColor, addVarExtraLink, removeVarExtraLink, copyPixPayload,
+    createTenantStore, deleteTenantStore, importProductsJSON
 };
