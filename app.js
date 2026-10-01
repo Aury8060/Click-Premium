@@ -15,15 +15,13 @@ const appFirebase = initializeApp(firebaseConfig);
 const db = getDatabase(appFirebase);
 
 // ==========================================
-// SAAS: DETECÇÃO DA LOJA PELA URL E PERSISTÊNCIA
+// SAAS: DETECÇÃO DA LOJA E PERSISTÊNCIA
 // ==========================================
 const urlParams = new URLSearchParams(window.location.search);
-const CURRENT_STORE = urlParams.get('loja') || 'padrao'; // Se não tiver ?loja=, usa a padrao (sua loja raiz)
+const isRootUrl = !window.location.search.includes('loja=');
+const CURRENT_STORE = urlParams.get('loja') || 'padrao';
 
-// Função que roteia os dados para a raiz (se for sua loja) ou para a pasta da loja parceira
 const dbPath = (node) => CURRENT_STORE === 'padrao' ? node : 'lojas/' + CURRENT_STORE + '/' + node;
-
-// Chaves do navegador isoladas por loja para evitar conflito de carrinhos
 const CART_KEY = 'cellCart_' + CURRENT_STORE;
 const USER_KEY = 'cellUser_' + CURRENT_STORE;
 
@@ -44,9 +42,10 @@ const state = {
 };
 
 // ==========================================
-// SISTEMA DE NOTIFICAÇÕES (Substitui os alerts)
+// NOTIFICAÇÕES (TOAST)
 // ==========================================
-function customAlert(title, message, type = 'success') {
+function customAlert(title, message, type) {
+    if(!type) type = 'success';
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = 'toast toast-' + type;
@@ -94,6 +93,7 @@ function updateCartStorage() {
 }
 
 function updateNavbar() {
+    if(isRootUrl) return; // Menu oculto no portal global
     document.getElementById('cart-count').innerText = state.cart.length;
     const userBtn = document.getElementById('nav-user-btn');
     const adminBtn = document.getElementById('nav-admin-btn');
@@ -135,43 +135,67 @@ function fileToBase64(file) {
 function sanitizeEmail(email) { return btoa(email); }
 
 // ==========================================
-// BANCO DE DADOS & PERSONALIZAÇÃO DA LOJA
+// LOGIN GLOBAL (PORTAL DE ENTRADA)
 // ==========================================
-onValue(ref(db, dbPath('config')), (snapshot) => {
-    if(snapshot.exists()) {
-        const cfg = snapshot.val();
-        if(cfg.storeName) {
-            document.querySelectorAll('.store-name-display').forEach(el => el.innerText = cfg.storeName);
-            document.title = cfg.storeName;
-            if(document.getElementById('admin-store-name')) document.getElementById('admin-store-name').value = cfg.storeName;
-        }
-        if(cfg.themeColor) {
-            document.documentElement.style.setProperty('--primary', cfg.themeColor);
-            if(document.getElementById('admin-theme-color')) document.getElementById('admin-theme-color').value = cfg.themeColor;
-        }
-        if(cfg.pixKey && document.getElementById('admin-pix-key')) {
-            document.getElementById('admin-pix-key').value = cfg.pixKey;
+async function processGlobalLogin() {
+    const u = document.getElementById('global-email').value.trim().toLowerCase();
+    const p = document.getElementById('global-pass').value.trim();
+
+    if(!u || !p) return customAlert("Aviso", "Preencha usuário e senha.", "info");
+
+    // 1. Super Admin
+    if(u === 'au.costa' && p === '80605276') {
+        localStorage.setItem('cellAdminRole', 'superadmin');
+        window.location.href = '?loja=padrao';
+        return;
+    }
+
+    // 2. Tenant Admin (Lojistas Parceiros)
+    const adminSnap = await get(ref(db, 'global_admins/' + btoa(u)));
+    if(adminSnap.exists() && adminSnap.val().password === p) {
+        localStorage.setItem('cellAdminRole', 'admin');
+        window.location.href = '?loja=' + adminSnap.val().storeId;
+        return;
+    }
+
+    // 3. Cliente - Vasculhar Banco de Dados
+    let foundStore = null;
+    let clientData = null;
+
+    if (u.includes('@')) {
+        // Checa Loja Padrão
+        const clientSnapPadrao = await get(ref(db, 'clientes/' + btoa(u)));
+        if(clientSnapPadrao.exists() && clientSnapPadrao.val().password === p) {
+            foundStore = 'padrao';
+            clientData = clientSnapPadrao.val();
+        } else {
+            // Checa todas as lojas parcerias
+            const lojasSnap = await get(ref(db, 'lojas'));
+            if(lojasSnap.exists()) {
+                const lojas = lojasSnap.val();
+                for(let storeKey in lojas) {
+                    if(lojas[storeKey].clientes && lojas[storeKey].clientes[btoa(u)]) {
+                        if(lojas[storeKey].clientes[btoa(u)].password === p) {
+                            foundStore = storeKey;
+                            clientData = lojas[storeKey].clientes[btoa(u)];
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
-});
 
-onValue(ref(db, dbPath('estoque')), (snapshot) => {
-    state.products = snapshot.val() || {};
-    renderCategoryButtons();
-    filterProducts();
-    if(state.isAdminLoggedIn) loadAdminProducts();
-});
-
-onValue(ref(db, dbPath('vendas')), (snapshot) => {
-    state.allOrders = snapshot.val() || {};
-    if(state.isAdminLoggedIn) {
-        loadAdminOrders();
-        filterDashboard();
+    if(foundStore && clientData) {
+        localStorage.setItem('cellUser_' + foundStore, JSON.stringify(clientData));
+        window.location.href = '?loja=' + foundStore;
+    } else {
+        customAlert("Acesso Negado", "E-mail/Usuário ou senha inválidos, ou loja não encontrada.", "error");
     }
-});
+}
 
 // ==========================================
-// CATÁLOGO E FILTROS
+// CATÁLOGO E PRODUTOS
 // ==========================================
 function renderCategoryButtons() {
     const categories = new Set(['Todos']);
@@ -205,7 +229,7 @@ function filterProducts() {
     });
 
     if(filtered.length === 0) {
-        grid.innerHTML = '<p style="color: #64748b; font-size: 1.1rem;">Nenhum produto encontrado na loja no momento.</p>';
+        grid.innerHTML = '<p style="color: #64748b; font-size: 1.1rem;">Nenhum produto encontrado nesta loja no momento.</p>';
         return;
     }
 
@@ -225,7 +249,6 @@ function filterProducts() {
                 if(v.ram) label += ' / ' + v.ram;
                 optionsList += '<option value="' + i + '">' + label + '</option>';
             });
-
             optionsHtml = '<select id="select-var-' + id + '" class="variant-select" onchange="app.changeProductPrice(\'' + id + '\', this.value)" style="margin-bottom: 5px;">' + optionsList + '</select>';
 
             if (firstVar.colors && firstVar.colors.length > 0) {
@@ -300,7 +323,7 @@ function addToCartSelected(id) {
 
     state.cart.push({ id, name: finalName, price: finalPrice });
     updateCartStorage();
-    customAlert('Item Adicionado', finalName + ' está no seu carrinho.', 'success');
+    customAlert("Item Adicionado", finalName + " foi para o seu carrinho.", "success");
     updateNavbar();
 }
 
@@ -352,14 +375,14 @@ async function registerClient() {
     const address = document.getElementById('reg-address').value;
     const password = document.getElementById('reg-pass').value;
 
-    if(!name || !email || !password || !phone) return customAlert("Aviso", "Preencha todos os campos obrigatórios!", "info");
+    if(!name || !email || !password || !phone) return customAlert("Aviso", "Preencha os campos obrigatórios!", "info");
     const clientId = sanitizeEmail(email);
     const clientData = { name, email, phone, address, password };
 
     await set(ref(db, dbPath('clientes/' + clientId)), clientData);
     state.currentUser = clientData;
     localStorage.setItem(USER_KEY, JSON.stringify(clientData));
-    customAlert("Bem-vindo!", "Cadastro realizado com sucesso.", "success");
+    customAlert("Boas Vindas!", "Cadastro realizado com sucesso.", "success");
     showView('catalog');
 }
 
@@ -371,11 +394,9 @@ async function loginClient() {
     if (snapshot.exists() && snapshot.val().password === pass) {
         state.currentUser = snapshot.val();
         localStorage.setItem(USER_KEY, JSON.stringify(snapshot.val()));
-        customAlert("Bem-vindo de volta!", "Login efetuado com sucesso.", "success");
+        customAlert("Bem-vindo de volta!", "Login efetuado.", "success");
         showView('catalog');
-    } else { 
-        customAlert("Acesso Negado", "Email ou senha incorretos na base de clientes desta loja.", "error"); 
-    }
+    } else { customAlert("Acesso Negado", "Email ou Senha incorretos.", "error"); }
 }
 
 function loadClientOrders() {
@@ -383,12 +404,10 @@ function loadClientOrders() {
     const list = document.getElementById('client-orders-list');
     list.innerHTML = '';
     
-    const myOrders = Object.entries(state.allOrders)
-        .filter(([id, o]) => o.client.email === state.currentUser.email)
-        .reverse();
+    const myOrders = Object.entries(state.allOrders).filter(([id, o]) => o.client.email === state.currentUser.email).reverse();
 
     if(myOrders.length === 0) {
-        list.innerHTML = '<p>Você ainda não fez nenhum pedido nesta loja.</p>';
+        list.innerHTML = '<p>Você ainda não fez nenhum pedido.</p>';
         return;
     }
 
@@ -430,7 +449,7 @@ function loadClientOrders() {
 }
 
 function clientConfirmReceipt(orderId) {
-    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O lojista será notificado.")) {
+    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O administrador será notificado.")) {
         update(ref(db, dbPath('vendas/' + orderId)), { status: "Entregue pelo Cliente" });
         customAlert("Obrigado!", "Sua compra foi finalizada com sucesso.", "success");
     }
@@ -445,7 +464,7 @@ function renderCart() {
     let total = 0;
     
     if(state.cart.length === 0) {
-        list.innerHTML = '<p style="color: #64748b; font-size: 1.1rem;">Seu carrinho está vazio.</p>';
+        list.innerHTML = '<p style="color:#64748b;">Seu carrinho está vazio.</p>';
         document.getElementById('checkout-step').style.display = 'none';
         document.getElementById('btn-start-checkout').style.display = 'none';
     } else {
@@ -498,11 +517,11 @@ function generatePixPayload(pixKey, amount) {
 
 async function startCheckout() {
     if(!state.currentUser) return showView('login');
-    if(state.cart.length === 0) return customAlert("Carrinho Vazio", "Adicione produtos primeiro.", "info");
+    if(state.cart.length === 0) return customAlert("Atenção", "Carrinho Vazio.", "info");
     
     const snap = await get(ref(db, dbPath('config/pixKey')));
     let pixKey = snap.exists() ? snap.val() : "";
-    if(!pixKey) return customAlert("Erro do Lojista", "A loja ainda não configurou uma chave PIX para receber.", "error");
+    if(!pixKey) return customAlert("Erro na Loja", "O lojista ainda não configurou uma chave PIX.", "error");
 
     const total = state.cart.reduce((acc, item) => acc + parseFloat(item.price), 0);
     const pixPayload = generatePixPayload(pixKey, total);
@@ -519,9 +538,9 @@ function copyPixPayload() {
     const input = document.getElementById('pix-payload-input');
     input.select(); input.setSelectionRange(0, 99999); 
     navigator.clipboard.writeText(input.value).then(() => {
-        customAlert("Chave Copiada!", "Cole no aplicativo do seu banco para pagar.", "success");
+        customAlert("Chave Copiada", "Cole no aplicativo do seu banco para pagar.", "success");
     }).catch(() => {
-        customAlert("Aviso", "Erro ao copiar, selecione o código manualmente.", "info");
+        customAlert("Aviso", "Erro ao copiar, selecione manualmente.", "info");
     });
 }
 
@@ -545,7 +564,7 @@ async function finishCheckout() {
     };
 
     await set(push(ref(db, dbPath('vendas'))), orderData);
-    customAlert("Pedido Recebido!", "O administrador validará o seu PIX. Acompanhe em Meus Pedidos.", "success");
+    customAlert("Pedido Recebido!", "Acompanhe em 'Meus Pedidos'.", "success");
     
     state.cart = []; 
     updateCartStorage(); 
@@ -554,12 +573,11 @@ async function finishCheckout() {
 }
 
 // ==========================================
-// ÁREA DO ADMINISTRADOR
+// ÁREA DO ADMINISTRADOR E SAAS
 // ==========================================
 async function loginAdmin() {
     const u = document.getElementById('admin-user').value.trim().toLowerCase();
     const p = document.getElementById('admin-pass').value.trim();
-    
     if(!u || !p) return customAlert("Aviso", "Preencha usuário e senha.", "info");
 
     if(u === 'au.costa' && p === '80605276') {
@@ -568,7 +586,7 @@ async function loginAdmin() {
         const snap = await get(ref(db, 'global_admins/' + btoa(u)));
         if (snap.exists() && snap.val().password === p) {
             const adminData = snap.val();
-            if(adminData.storeId !== CURRENT_STORE) {
+            if(adminData.storeId !== CURRENT_STORE && !isRootUrl) {
                 customAlert("Redirecionando...", "Indo para o painel da sua loja.", "info");
                 setTimeout(() => window.location.href = '?loja=' + adminData.storeId, 1500);
                 return;
@@ -591,12 +609,11 @@ function processAdminLogin(role) {
     loadAdminProducts();
     loadAdminOrders();
 
+    const usrBtn = document.getElementById('nav-tab-users');
     if(role === 'superadmin') {
-        const usrBtn = document.getElementById('nav-tab-users');
         if(usrBtn) usrBtn.style.display = 'block';
         loadSystemUsers();
     } else {
-        const usrBtn = document.getElementById('nav-tab-users');
         if(usrBtn) usrBtn.style.display = 'none';
     }
 
@@ -609,8 +626,7 @@ function logoutAdmin() {
     state.isAdminLoggedIn = false;
     state.adminRole = null;
     localStorage.removeItem('cellAdminRole');
-    updateNavbar(); 
-    showView('catalog');
+    updateNavbar(); showView('catalog');
 }
 
 function saveStoreConfig() {
@@ -618,10 +634,9 @@ function saveStoreConfig() {
     const name = document.getElementById('admin-store-name').value.trim();
     const color = document.getElementById('admin-theme-color').value;
     update(ref(db, dbPath('config')), { pixKey: pix, storeName: name, themeColor: color });
-    customAlert("Pronto!", "Configurações da loja salvas com sucesso.", "success");
+    customAlert("Salvo", "Configurações aplicadas com sucesso.", "success");
 }
 
-// === SaaS (Gestão de Lojas) ===
 function createTenantStore() {
     const name = document.getElementById('sys-store-name').value.trim();
     const slug = document.getElementById('sys-store-slug').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -635,11 +650,8 @@ function createTenantStore() {
     set(ref(db, 'lojas/' + slug + '/config'), { storeName: name, themeColor: '#2563eb' });
 
     customAlert("Loja Criada!", "O link da loja é: ?loja=" + slug, "success");
-    
-    document.getElementById('sys-store-name').value = '';
-    document.getElementById('sys-store-slug').value = '';
-    document.getElementById('sys-user').value = '';
-    document.getElementById('sys-pass').value = '';
+    document.getElementById('sys-store-name').value = ''; document.getElementById('sys-store-slug').value = '';
+    document.getElementById('sys-user').value = ''; document.getElementById('sys-pass').value = '';
     loadSystemUsers();
 }
 
@@ -653,13 +665,8 @@ function loadSystemUsers() {
             Object.keys(admins).forEach(key => {
                 const admin = admins[key];
                 tbody.innerHTML += `
-                    <tr>
-                        <td><strong>${admin.storeName}</strong></td>
-                        <td>?loja=${admin.storeId}</td>
-                        <td>${admin.username}</td>
-                        <td><button onclick="app.deleteTenantStore('${key}')" class="btn-danger"><i class="fas fa-trash"></i></button></td>
-                    </tr>
-                `;
+                    <tr><td><strong>${admin.storeName}</strong></td><td>?loja=${admin.storeId}</td><td>${admin.username}</td>
+                    <td><button onclick="app.deleteTenantStore('${key}')" class="btn-danger"><i class="fas fa-trash"></i></button></td></tr>`;
             });
         }
     });
@@ -672,10 +679,9 @@ function deleteTenantStore(key) {
     }
 }
 
-// === Importar Produtos em JSON ===
 function importProductsJSON() {
     const fileInput = document.getElementById('import-json-file');
-    if(fileInput.files.length === 0) return customAlert("Atenção", "Selecione um arquivo .json", "info");
+    if(fileInput.files.length === 0) return customAlert("Aviso", "Selecione um arquivo .json", "info");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -687,15 +693,14 @@ function importProductsJSON() {
             } else if (typeof data === 'object') {
                 for(let key in data) { await set(ref(db, dbPath('estoque/' + key)), data[key]); count++; }
             }
-            customAlert("Upload Concluído", count + " produtos foram importados com sucesso!", "success");
+            customAlert("Importado", count + " produtos foram adicionados!", "success");
             fileInput.value = '';
         } catch (err) {
-            customAlert("Erro no Arquivo", "Não foi possível ler o JSON. Verifique o formato.", "error");
+            customAlert("Erro", "Não foi possível ler o JSON.", "error");
         }
     };
     reader.readAsText(fileInput.files[0]);
 }
-
 
 function openReceipt(base64) {
     document.getElementById('receipt-img').src = base64;
@@ -743,7 +748,7 @@ function approveOrder(id) {
     const dias = prompt("Previsão de entrega (Apenas números, em dias):");
     if(dias && !isNaN(dias)) {
         update(ref(db, dbPath('vendas/' + id)), { status: "Despachado", deliveryDays: dias });
-        customAlert("Despachado", "Cliente notificado da previsão.", "success");
+        customAlert("Enviado", "Cliente notificado do envio.", "success");
     }
 }
 
@@ -960,18 +965,55 @@ function loadAdminProducts() {
     });
 }
 
-// INICIALIZAÇÃO E PERSISTÊNCIA DE TELAS
-const savedAppView = localStorage.getItem('lastAppView_' + CURRENT_STORE) || 'catalog';
-
-if(state.isAdminLoggedIn) {
-    if(savedAppView === 'admin-panel') {
-        const savedTab = localStorage.getItem('lastAdminTab_' + CURRENT_STORE) || 'dash';
-        showView('admin-panel');
-        showAdminTab(savedTab);
-    } else { showView(savedAppView); }
+// ==========================================
+// INICIALIZAÇÃO
+// ==========================================
+if (isRootUrl) {
+    document.getElementById('main-navbar').style.display = 'none';
+    document.getElementById('app-container').style.padding = '0';
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-global-login').classList.add('active');
 } else {
-    if(savedAppView === 'admin-panel' || savedAppView === 'admin-login') showView('catalog'); 
-    else showView(savedAppView);
+    // Conexões de banco
+    onValue(ref(db, dbPath('config')), (snapshot) => {
+        if(snapshot.exists()) {
+            const cfg = snapshot.val();
+            if(cfg.storeName) {
+                document.querySelectorAll('.store-name-display').forEach(el => el.innerText = cfg.storeName);
+                document.title = cfg.storeName;
+                if(document.getElementById('admin-store-name')) document.getElementById('admin-store-name').value = cfg.storeName;
+            }
+            if(cfg.themeColor) {
+                document.documentElement.style.setProperty('--primary', cfg.themeColor);
+                if(document.getElementById('admin-theme-color')) document.getElementById('admin-theme-color').value = cfg.themeColor;
+            }
+            if(cfg.pixKey && document.getElementById('admin-pix-key')) document.getElementById('admin-pix-key').value = cfg.pixKey;
+        }
+    });
+
+    onValue(ref(db, dbPath('estoque')), (snapshot) => {
+        state.products = snapshot.val() || {};
+        renderCategoryButtons(); filterProducts();
+        if(state.isAdminLoggedIn) loadAdminProducts();
+    });
+
+    onValue(ref(db, dbPath('vendas')), (snapshot) => {
+        state.allOrders = snapshot.val() || {};
+        if(state.isAdminLoggedIn) { loadAdminOrders(); filterDashboard(); }
+    });
+
+    const savedAppView = localStorage.getItem('lastAppView_' + CURRENT_STORE) || 'catalog';
+    if(state.isAdminLoggedIn) {
+        if(savedAppView === 'admin-panel') {
+            const savedTab = localStorage.getItem('lastAdminTab_' + CURRENT_STORE) || 'dash';
+            showView('admin-panel');
+            showAdminTab(savedTab);
+            if(state.adminRole === 'superadmin') loadSystemUsers();
+        } else { showView(savedAppView); }
+    } else {
+        if(savedAppView === 'admin-panel' || savedAppView === 'admin-login') showView('catalog'); 
+        else showView(savedAppView);
+    }
 }
 
 window.app = {
@@ -980,5 +1022,5 @@ window.app = {
     loginAdmin, logoutAdmin, showAdminTab, saveProduct, editProduct, cancelEdit, deleteProduct, approveOrder, completeOrder, openReceipt, saveStoreConfig, filterDashboard,
     openGallery, closeGallery, prevImage, nextImage, addVariant, removeVariant,
     addVarColor, removeVarColor, addVarExtraLink, removeVarExtraLink, copyPixPayload,
-    createTenantStore, deleteTenantStore, importProductsJSON
+    createTenantStore, deleteTenantStore, importProductsJSON, processGlobalLogin
 };

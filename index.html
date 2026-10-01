@@ -13,7 +13,7 @@
     <!-- Container de Notificações Profissionais (Toasts) -->
     <div id="toast-container" class="toast-container"></div>
 
-    <nav class="navbar">
+    <nav class="navbar" id="main-navbar">
         <div class="logo" onclick="app.showView('catalog')">
             <i class="fas fa-store"></i> <span class="store-name-display">Click Premium</span>
         </div>
@@ -31,10 +31,24 @@
     </nav>
 
     <main id="app-container">
+
+        <!-- VISÃO: PORTAL DE ACESSO GLOBAL (SÓ APARECE NO LINK RAIZ) -->
+        <section id="view-global-login" class="view">
+            <div class="auth-container" style="margin-top: 5vh; text-align: center; border-top: 5px solid var(--primary); box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+                <div style="font-size: 3rem; color: var(--primary); margin-bottom: 10px;"><i class="fas fa-store"></i></div>
+                <h2 style="color: var(--dark); font-size: 1.8rem; margin-bottom: 5px;">Portal de Acesso</h2>
+                <p style="margin-bottom: 25px; color: #64748b; font-size: 0.95rem;">Faça login para ser direcionado à sua loja ou painel administrativo.</p>
+                <input type="text" id="global-email" placeholder="E-mail ou Usuário" autocomplete="off" autocorrect="off" spellcheck="false" style="padding: 1rem;">
+                <input type="password" id="global-pass" placeholder="Senha" style="padding: 1rem;">
+                <button onclick="app.processGlobalLogin()" class="btn-primary" style="margin-top: 15px; padding: 1rem; font-size: 1.1rem;">Acessar minha Loja</button>
+            </div>
+        </section>
+
         <!-- VISÃO: CATÁLOGO -->
-        <section id="view-catalog" class="view active">
+        <section id="view-catalog" class="view">
             <div class="catalog-controls">
-                <input type="text" id="search-input" placeholder="Buscar por modelo, marca..." onkeyup="app.filterProducts()">
+                <!-- Barra com bloqueio de autocomplete do navegador -->
+                <input type="text" id="search-input" placeholder="Buscar por modelo, marca..." onkeyup="app.filterProducts()" autocomplete="off" autocorrect="off" spellcheck="false" name="search-catalog-off">
                 <div id="category-filters" class="category-filters"></div>
             </div>
             <div class="product-grid" id="product-grid"></div>
@@ -52,8 +66,8 @@
             <div class="auth-container">
                 <h2>Identificação</h2>
                 <div id="client-login-form">
-                    <input type="email" id="cli-email" placeholder="Seu E-mail">
-                    <input type="password" id="cli-pass" placeholder="Senha">
+                    <input type="email" id="cli-email" placeholder="Seu E-mail" autocomplete="off">
+                    <input type="password" id="cli-pass" placeholder="Senha" autocomplete="new-password">
                     <button onclick="app.loginClient()" class="btn-primary">Entrar</button>
                     <p>Não tem conta? <a href="#" onclick="app.toggleClientAuthMode()">Cadastre-se</a></p>
                 </div>
@@ -103,7 +117,7 @@
         <section id="view-admin-login" class="view">
             <div class="auth-container">
                 <h2>Acesso Restrito (Admin)</h2>
-                <input type="text" id="admin-user" placeholder="Usuário">
+                <input type="text" id="admin-user" placeholder="Usuário" autocomplete="off" spellcheck="false">
                 <input type="password" id="admin-pass" placeholder="Senha">
                 <button onclick="app.loginAdmin()" class="btn-primary">Entrar no Painel</button>
             </div>
@@ -117,11 +131,10 @@
                     <button onclick="app.showAdminTab('dash')">Dashboard</button>
                     <button onclick="app.showAdminTab('products')">Produtos</button>
                     <button onclick="app.showAdminTab('orders')">Vendas Ativas</button>
-                    <button onclick="app.showAdminTab('settings')">Configurações (Cores e Loja)</button>
+                    <button onclick="app.showAdminTab('settings')">Configurações</button>
                     
-                    <!-- Aba visível Apenas para o Super Admin -->
                     <button id="nav-tab-users" onclick="app.showAdminTab('users')" style="display:none; color: var(--primary); font-weight: bold; border-top: 1px solid var(--border); margin-top: 10px;">
-                        <i class="fas fa-network-wired"></i> Multi-Lojas (SaaS)
+                        <i class="fas fa-network-wired"></i> Gestão SaaS Lojas
                     </button>
                     
                     <button onclick="app.logoutAdmin()" class="btn-danger" style="margin-top: 10px;">Sair do Admin</button>
@@ -217,24 +230,21 @@
                         </table>
                     </div>
 
-                    <!-- Aba: Configurações (Personalização de cada Lojista) -->
+                    <!-- Aba: Configurações -->
                     <div id="admin-tab-settings" class="admin-tab" style="display:none;">
                         <h2>Configurações da Loja e Recebimento</h2>
                         <div class="form-group" style="background: #f8fafc; padding: 20px; border-radius: 8px;">
                             <label>Nome Público da sua Loja:</label>
                             <input type="text" id="admin-store-name" placeholder="Ex: Central dos Celulares">
-                            
                             <label>Cor Principal do Sistema (Clique para escolher):</label>
                             <input type="color" id="admin-theme-color" value="#2563eb" style="height: 50px; cursor: pointer;">
-                            
                             <label style="margin-top: 15px; display: block;">Sua Chave PIX (Para receber os pagamentos):</label>
                             <input type="text" id="admin-pix-key" placeholder="Ex: e-mail, cpf, cnpj ou telefone">
-                            
                             <button onclick="app.saveStoreConfig()" class="btn-primary" style="margin-top: 15px;">Salvar Configurações</button>
                         </div>
                     </div>
 
-                    <!-- NOVA ABA: Gestão de Lojas (SaaS) - Exclusiva do Super Admin -->
+                    <!-- ABA: Gestão de Lojas SaaS (Super Admin) -->
                     <div id="admin-tab-users" class="admin-tab" style="display:none;">
                         <h2>Gestão de Lojas Parceiras (SaaS)</h2>
                         <p style="color: #64748b; margin-bottom: 20px;">Crie novas lojas independentes. Cada parceiro terá seu próprio estoque, clientes e configurações.</p>
@@ -242,16 +252,12 @@
                         <div class="form-group" style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid var(--primary);">
                             <label><strong>Nome da Nova Loja:</strong></label>
                             <input type="text" id="sys-store-name" placeholder="Ex: Imports SP">
-                            
                             <label><strong>Link da Loja (Sem espaços):</strong></label>
                             <input type="text" id="sys-store-slug" placeholder="Ex: importssp (O link será: ?loja=importssp)">
-                            
                             <label><strong>Usuário de Acesso do Lojista:</strong></label>
-                            <input type="text" id="sys-user" placeholder="Login para o novo lojista">
-                            
+                            <input type="text" id="sys-user" placeholder="Login para o novo lojista" autocomplete="off" spellcheck="false">
                             <label><strong>Senha de Acesso:</strong></label>
                             <input type="password" id="sys-pass" placeholder="Senha do novo lojista">
-                            
                             <button onclick="app.createTenantStore()" class="btn-success" style="margin-top: 10px;">Criar Nova Loja</button>
                         </div>
 
