@@ -10,7 +10,6 @@
 </head>
 <body>
 
-    <!-- Container de Notificações Profissionais (Toasts) -->
     <div id="toast-container" class="toast-container"></div>
 
     <nav class="navbar" id="main-navbar">
@@ -32,14 +31,14 @@
 
     <main id="app-container">
 
-        <!-- VISÃO: PORTAL DE ACESSO GLOBAL (SÓ APARECE NO LINK RAIZ) -->
+        <!-- VISÃO: PORTAL DE ACESSO GLOBAL -->
         <section id="view-global-login" class="view">
             <div class="auth-container" style="margin-top: 5vh; text-align: center; border-top: 5px solid var(--primary); box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
                 <div style="font-size: 3rem; color: var(--primary); margin-bottom: 10px;"><i class="fas fa-store"></i></div>
                 <h2 style="color: var(--dark); font-size: 1.8rem; margin-bottom: 5px;">Portal de Acesso</h2>
                 <p style="margin-bottom: 25px; color: #64748b; font-size: 0.95rem;">Faça login para ser direcionado à sua loja ou painel administrativo.</p>
-                <input type="text" id="global-email" placeholder="E-mail ou Usuário" autocomplete="off" autocorrect="off" spellcheck="false" style="padding: 1rem;">
-                <input type="password" id="global-pass" placeholder="Senha" style="padding: 1rem;">
+                <input type="text" id="global-email" placeholder="E-mail ou Usuário" autocomplete="off" autocorrect="off" spellcheck="false" style="padding: 1rem;" onkeypress="if(event.key === 'Enter') app.processGlobalLogin()">
+                <input type="password" id="global-pass" placeholder="Senha" style="padding: 1rem;" onkeypress="if(event.key === 'Enter') app.processGlobalLogin()">
                 <button onclick="app.processGlobalLogin()" class="btn-primary" style="margin-top: 15px; padding: 1rem; font-size: 1.1rem;">Acessar minha Loja</button>
             </div>
         </section>
@@ -47,7 +46,6 @@
         <!-- VISÃO: CATÁLOGO -->
         <section id="view-catalog" class="view">
             <div class="catalog-controls">
-                <!-- Barra com bloqueio de autocomplete do navegador -->
                 <input type="text" id="search-input" placeholder="Buscar por modelo, marca..." onkeyup="app.filterProducts()" autocomplete="off" autocorrect="off" spellcheck="false" name="search-catalog-off">
                 <div id="category-filters" class="category-filters"></div>
             </div>
@@ -61,13 +59,13 @@
             <div id="client-orders-list" style="display: flex; flex-direction: column; gap: 15px;"></div>
         </section>
 
-        <!-- VISÃO: LOGIN/CADASTRO -->
+        <!-- VISÃO: LOGIN/CADASTRO CLIENTE -->
         <section id="view-login" class="view">
             <div class="auth-container">
                 <h2>Identificação</h2>
                 <div id="client-login-form">
-                    <input type="email" id="cli-email" placeholder="Seu E-mail" autocomplete="off">
-                    <input type="password" id="cli-pass" placeholder="Senha" autocomplete="new-password">
+                    <input type="email" id="cli-email" placeholder="Seu E-mail" autocomplete="off" onkeypress="if(event.key === 'Enter') app.loginClient()">
+                    <input type="password" id="cli-pass" placeholder="Senha" autocomplete="new-password" onkeypress="if(event.key === 'Enter') app.loginClient()">
                     <button onclick="app.loginClient()" class="btn-primary">Entrar</button>
                     <p>Não tem conta? <a href="#" onclick="app.toggleClientAuthMode()">Cadastre-se</a></p>
                 </div>
@@ -117,8 +115,8 @@
         <section id="view-admin-login" class="view">
             <div class="auth-container">
                 <h2>Acesso Restrito (Admin)</h2>
-                <input type="text" id="admin-user" placeholder="Usuário" autocomplete="off" spellcheck="false">
-                <input type="password" id="admin-pass" placeholder="Senha">
+                <input type="text" id="admin-user" placeholder="Usuário" autocomplete="off" spellcheck="false" onkeypress="if(event.key === 'Enter') app.loginAdmin()">
+                <input type="password" id="admin-pass" placeholder="Senha" onkeypress="if(event.key === 'Enter') app.loginAdmin()">
                 <button onclick="app.loginAdmin()" class="btn-primary">Entrar no Painel</button>
             </div>
         </section>
@@ -244,26 +242,33 @@
                         </div>
                     </div>
 
-                    <!-- ABA: Gestão de Lojas SaaS (Super Admin) -->
+                    <!-- ABA: Gestão de Lojas SaaS -->
                     <div id="admin-tab-users" class="admin-tab" style="display:none;">
-                        <h2>Gestão de Lojas Parceiras (SaaS)</h2>
-                        <p style="color: #64748b; margin-bottom: 20px;">Crie novas lojas independentes. Cada parceiro terá seu próprio estoque, clientes e configurações.</p>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap;">
+                            <div>
+                                <h2>Gestão de Lojas Parceiras (SaaS)</h2>
+                                <p style="color: #64748b;">Crie e edite as contas das lojas independentes do sistema.</p>
+                            </div>
+                        </div>
                         
                         <div class="form-group" style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid var(--primary);">
-                            <label><strong>Nome da Nova Loja:</strong></label>
+                            <input type="hidden" id="sys-edit-key">
+                            <label><strong>Nome Público da Loja:</strong></label>
                             <input type="text" id="sys-store-name" placeholder="Ex: Imports SP">
-                            <label><strong>Link da Loja (Sem espaços):</strong></label>
-                            <input type="text" id="sys-store-slug" placeholder="Ex: importssp (O link será: ?loja=importssp)">
-                            <label><strong>Usuário de Acesso do Lojista:</strong></label>
-                            <input type="text" id="sys-user" placeholder="Login para o novo lojista" autocomplete="off" spellcheck="false">
+                            <label><strong>Link da Loja (Sem espaços - Ex: importssp):</strong></label>
+                            <input type="text" id="sys-store-slug" placeholder="O link de acesso será: ?loja=importssp">
+                            <label><strong>Usuário de Login do Lojista:</strong></label>
+                            <input type="text" id="sys-user" placeholder="Login para o sistema" autocomplete="off" spellcheck="false">
                             <label><strong>Senha de Acesso:</strong></label>
-                            <input type="password" id="sys-pass" placeholder="Senha do novo lojista">
-                            <button onclick="app.createTenantStore()" class="btn-success" style="margin-top: 10px;">Criar Nova Loja</button>
+                            <input type="password" id="sys-pass" placeholder="Senha do lojista">
+                            
+                            <button id="btn-save-tenant" onclick="app.saveTenantStore()" class="btn-success" style="margin-top: 10px;">Criar Nova Loja</button>
+                            <button id="btn-cancel-tenant" onclick="app.cancelEditTenant()" class="btn-danger" style="display:none; margin-top: 10px; width: 100%;">Cancelar Edição</button>
                         </div>
 
                         <h3>Lojas Ativas Cadastradas</h3>
                         <table class="admin-table">
-                            <thead><tr><th>Nome da Loja</th><th>Link</th><th>Usuário Admin</th><th>Ações</th></tr></thead>
+                            <thead><tr><th>Nome da Loja</th><th>Link</th><th>Usuário</th><th>Ações</th></tr></thead>
                             <tbody id="admin-users-list"></tbody>
                         </table>
                     </div>

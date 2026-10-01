@@ -93,7 +93,7 @@ function updateCartStorage() {
 }
 
 function updateNavbar() {
-    if(isRootUrl) return; // Menu oculto no portal global
+    if(isRootUrl) return; 
     document.getElementById('cart-count').innerText = state.cart.length;
     const userBtn = document.getElementById('nav-user-btn');
     const adminBtn = document.getElementById('nav-admin-btn');
@@ -143,33 +143,33 @@ async function processGlobalLogin() {
 
     if(!u || !p) return customAlert("Aviso", "Preencha usuário e senha.", "info");
 
-    // 1. Super Admin
     if(u === 'au.costa' && p === '80605276') {
         localStorage.setItem('cellAdminRole', 'superadmin');
+        localStorage.setItem('lastAppView_padrao', 'admin-panel');
+        localStorage.setItem('lastAdminTab_padrao', 'dash');
         window.location.href = '?loja=padrao';
         return;
     }
 
-    // 2. Tenant Admin (Lojistas Parceiros)
     const adminSnap = await get(ref(db, 'global_admins/' + btoa(u)));
     if(adminSnap.exists() && adminSnap.val().password === p) {
+        const storeId = adminSnap.val().storeId;
         localStorage.setItem('cellAdminRole', 'admin');
-        window.location.href = '?loja=' + adminSnap.val().storeId;
+        localStorage.setItem('lastAppView_' + storeId, 'admin-panel');
+        localStorage.setItem('lastAdminTab_' + storeId, 'dash');
+        window.location.href = '?loja=' + storeId;
         return;
     }
 
-    // 3. Cliente - Vasculhar Banco de Dados
     let foundStore = null;
     let clientData = null;
 
     if (u.includes('@')) {
-        // Checa Loja Padrão
         const clientSnapPadrao = await get(ref(db, 'clientes/' + btoa(u)));
         if(clientSnapPadrao.exists() && clientSnapPadrao.val().password === p) {
             foundStore = 'padrao';
             clientData = clientSnapPadrao.val();
         } else {
-            // Checa todas as lojas parcerias
             const lojasSnap = await get(ref(db, 'lojas'));
             if(lojasSnap.exists()) {
                 const lojas = lojasSnap.val();
@@ -188,6 +188,7 @@ async function processGlobalLogin() {
 
     if(foundStore && clientData) {
         localStorage.setItem('cellUser_' + foundStore, JSON.stringify(clientData));
+        localStorage.setItem('lastAppView_' + foundStore, 'catalog');
         window.location.href = '?loja=' + foundStore;
     } else {
         customAlert("Acesso Negado", "E-mail/Usuário ou senha inválidos, ou loja não encontrada.", "error");
@@ -407,7 +408,7 @@ function loadClientOrders() {
     const myOrders = Object.entries(state.allOrders).filter(([id, o]) => o.client.email === state.currentUser.email).reverse();
 
     if(myOrders.length === 0) {
-        list.innerHTML = '<p>Você ainda não fez nenhum pedido.</p>';
+        list.innerHTML = '<p>Você ainda não fez nenhum pedido nesta loja.</p>';
         return;
     }
 
@@ -449,7 +450,7 @@ function loadClientOrders() {
 }
 
 function clientConfirmReceipt(orderId) {
-    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O administrador será notificado.")) {
+    if(confirm("Confirmar que você recebeu este pedido perfeitamente? O lojista será notificado.")) {
         update(ref(db, dbPath('vendas/' + orderId)), { status: "Entregue pelo Cliente" });
         customAlert("Obrigado!", "Sua compra foi finalizada com sucesso.", "success");
     }
@@ -464,7 +465,7 @@ function renderCart() {
     let total = 0;
     
     if(state.cart.length === 0) {
-        list.innerHTML = '<p style="color:#64748b;">Seu carrinho está vazio.</p>';
+        list.innerHTML = '<p style="color: #64748b; font-size: 1.1rem;">Seu carrinho está vazio.</p>';
         document.getElementById('checkout-step').style.display = 'none';
         document.getElementById('btn-start-checkout').style.display = 'none';
     } else {
@@ -521,7 +522,7 @@ async function startCheckout() {
     
     const snap = await get(ref(db, dbPath('config/pixKey')));
     let pixKey = snap.exists() ? snap.val() : "";
-    if(!pixKey) return customAlert("Erro na Loja", "O lojista ainda não configurou uma chave PIX.", "error");
+    if(!pixKey) return customAlert("Erro na Loja", "O lojista ainda não configurou uma chave PIX para receber.", "error");
 
     const total = state.cart.reduce((acc, item) => acc + parseFloat(item.price), 0);
     const pixPayload = generatePixPayload(pixKey, total);
@@ -564,7 +565,7 @@ async function finishCheckout() {
     };
 
     await set(push(ref(db, dbPath('vendas'))), orderData);
-    customAlert("Pedido Recebido!", "Acompanhe em 'Meus Pedidos'.", "success");
+    customAlert("Pedido Recebido!", "O administrador validará o seu PIX. Acompanhe em Meus Pedidos.", "success");
     
     state.cart = []; 
     updateCartStorage(); 
@@ -573,14 +574,17 @@ async function finishCheckout() {
 }
 
 // ==========================================
-// ÁREA DO ADMINISTRADOR E SAAS
+// ÁREA DO ADMINISTRADOR
 // ==========================================
 async function loginAdmin() {
     const u = document.getElementById('admin-user').value.trim().toLowerCase();
     const p = document.getElementById('admin-pass').value.trim();
+    
     if(!u || !p) return customAlert("Aviso", "Preencha usuário e senha.", "info");
 
     if(u === 'au.costa' && p === '80605276') {
+        localStorage.setItem('lastAppView_padrao', 'admin-panel');
+        localStorage.setItem('lastAdminTab_padrao', 'dash');
         processAdminLogin('superadmin');
     } else {
         const snap = await get(ref(db, 'global_admins/' + btoa(u)));
@@ -588,9 +592,13 @@ async function loginAdmin() {
             const adminData = snap.val();
             if(adminData.storeId !== CURRENT_STORE && !isRootUrl) {
                 customAlert("Redirecionando...", "Indo para o painel da sua loja.", "info");
+                localStorage.setItem('lastAppView_' + adminData.storeId, 'admin-panel');
+                localStorage.setItem('lastAdminTab_' + adminData.storeId, 'dash');
                 setTimeout(() => window.location.href = '?loja=' + adminData.storeId, 1500);
                 return;
             }
+            localStorage.setItem('lastAppView_' + adminData.storeId, 'admin-panel');
+            localStorage.setItem('lastAdminTab_' + adminData.storeId, 'dash');
             processAdminLogin('admin');
         } else {
             customAlert("Acesso Negado", "Usuário ou senha inválidos.", "error");
@@ -626,7 +634,8 @@ function logoutAdmin() {
     state.isAdminLoggedIn = false;
     state.adminRole = null;
     localStorage.removeItem('cellAdminRole');
-    updateNavbar(); showView('catalog');
+    updateNavbar(); 
+    showView('catalog');
 }
 
 function saveStoreConfig() {
@@ -634,24 +643,73 @@ function saveStoreConfig() {
     const name = document.getElementById('admin-store-name').value.trim();
     const color = document.getElementById('admin-theme-color').value;
     update(ref(db, dbPath('config')), { pixKey: pix, storeName: name, themeColor: color });
-    customAlert("Salvo", "Configurações aplicadas com sucesso.", "success");
+    customAlert("Pronto!", "Configurações da loja salvas com sucesso.", "success");
 }
 
-function createTenantStore() {
+// === SaaS (Gestão de Lojas) ===
+
+function editTenantStore(key) {
+    get(ref(db, 'global_admins/' + key)).then(snap => {
+        if(snap.exists()) {
+            const data = snap.val();
+            document.getElementById('sys-edit-key').value = key;
+            document.getElementById('sys-store-name').value = data.storeName;
+            
+            document.getElementById('sys-store-slug').value = data.storeId;
+            document.getElementById('sys-store-slug').disabled = true; // Slug define banco, não deve ser mudado fácil
+            
+            document.getElementById('sys-user').value = data.username;
+            document.getElementById('sys-user').disabled = true; // Usuário define chave, não deve ser mudado
+            
+            document.getElementById('sys-pass').value = data.password;
+
+            document.getElementById('btn-save-tenant').innerText = "Salvar Alterações";
+            document.getElementById('btn-cancel-tenant').style.display = "inline-block";
+            window.scrollTo(0, document.getElementById('admin-tab-users').offsetTop);
+        }
+    });
+}
+
+function cancelEditTenant() {
+    document.getElementById('sys-edit-key').value = '';
+    document.getElementById('sys-store-name').value = '';
+    
+    document.getElementById('sys-store-slug').value = '';
+    document.getElementById('sys-store-slug').disabled = false;
+    
+    document.getElementById('sys-user').value = '';
+    document.getElementById('sys-user').disabled = false;
+    
+    document.getElementById('sys-pass').value = '';
+
+    document.getElementById('btn-save-tenant').innerText = "Criar Nova Loja";
+    document.getElementById('btn-cancel-tenant').style.display = "none";
+}
+
+function saveTenantStore() {
+    const editKey = document.getElementById('sys-edit-key').value;
     const name = document.getElementById('sys-store-name').value.trim();
     const slug = document.getElementById('sys-store-slug').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
     const u = document.getElementById('sys-user').value.trim().toLowerCase();
     const p = document.getElementById('sys-pass').value.trim();
     
-    if(!name || !slug || !u || !p) return customAlert("Erro", "Preencha todos os campos da nova loja.", "error");
-    if(u === 'au.costa') return customAlert("Inválido", "Este usuário é reservado.", "error");
+    if(!name || !slug || !u || !p) return customAlert("Erro", "Preencha todos os campos da loja.", "error");
+    if(u === 'au.costa' && !editKey) return customAlert("Inválido", "Este usuário é reservado.", "error");
 
-    set(ref(db, 'global_admins/' + btoa(u)), { username: u, password: p, storeId: slug, storeName: name });
-    set(ref(db, 'lojas/' + slug + '/config'), { storeName: name, themeColor: '#2563eb' });
+    const key = editKey ? editKey : btoa(u);
 
-    customAlert("Loja Criada!", "O link da loja é: ?loja=" + slug, "success");
-    document.getElementById('sys-store-name').value = ''; document.getElementById('sys-store-slug').value = '';
-    document.getElementById('sys-user').value = ''; document.getElementById('sys-pass').value = '';
+    // Salva ou atualiza
+    set(ref(db, 'global_admins/' + key), { username: u, password: p, storeId: slug, storeName: name });
+    
+    if(editKey) {
+        update(ref(db, 'lojas/' + slug + '/config'), { storeName: name });
+        customAlert("Atualizado!", "Loja e senha do administrador atualizados com sucesso.", "success");
+    } else {
+        set(ref(db, 'lojas/' + slug + '/config'), { storeName: name, themeColor: '#2563eb' });
+        customAlert("Loja Criada!", "O link da loja é: ?loja=" + slug, "success");
+    }
+    
+    cancelEditTenant();
     loadSystemUsers();
 }
 
@@ -665,8 +723,16 @@ function loadSystemUsers() {
             Object.keys(admins).forEach(key => {
                 const admin = admins[key];
                 tbody.innerHTML += `
-                    <tr><td><strong>${admin.storeName}</strong></td><td>?loja=${admin.storeId}</td><td>${admin.username}</td>
-                    <td><button onclick="app.deleteTenantStore('${key}')" class="btn-danger"><i class="fas fa-trash"></i></button></td></tr>`;
+                    <tr>
+                        <td><strong>${admin.storeName}</strong></td>
+                        <td>?loja=${admin.storeId}</td>
+                        <td>${admin.username}</td>
+                        <td class="action-btns">
+                            <button onclick="app.editTenantStore('${key}')" class="btn-warning"><i class="fas fa-edit"></i></button>
+                            <button onclick="app.deleteTenantStore('${key}')" class="btn-danger"><i class="fas fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
             });
         }
     });
@@ -679,9 +745,10 @@ function deleteTenantStore(key) {
     }
 }
 
+// === Importar Produtos em JSON ===
 function importProductsJSON() {
     const fileInput = document.getElementById('import-json-file');
-    if(fileInput.files.length === 0) return customAlert("Aviso", "Selecione um arquivo .json", "info");
+    if(fileInput.files.length === 0) return customAlert("Atenção", "Selecione um arquivo .json", "info");
 
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -693,14 +760,15 @@ function importProductsJSON() {
             } else if (typeof data === 'object') {
                 for(let key in data) { await set(ref(db, dbPath('estoque/' + key)), data[key]); count++; }
             }
-            customAlert("Importado", count + " produtos foram adicionados!", "success");
+            customAlert("Upload Concluído", count + " produtos foram importados com sucesso!", "success");
             fileInput.value = '';
         } catch (err) {
-            customAlert("Erro", "Não foi possível ler o JSON.", "error");
+            customAlert("Erro no Arquivo", "Não foi possível ler o JSON. Verifique o formato.", "error");
         }
     };
     reader.readAsText(fileInput.files[0]);
 }
+
 
 function openReceipt(base64) {
     document.getElementById('receipt-img').src = base64;
@@ -748,7 +816,7 @@ function approveOrder(id) {
     const dias = prompt("Previsão de entrega (Apenas números, em dias):");
     if(dias && !isNaN(dias)) {
         update(ref(db, dbPath('vendas/' + id)), { status: "Despachado", deliveryDays: dias });
-        customAlert("Enviado", "Cliente notificado do envio.", "success");
+        customAlert("Despachado", "Cliente notificado da previsão.", "success");
     }
 }
 
@@ -974,7 +1042,6 @@ if (isRootUrl) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.getElementById('view-global-login').classList.add('active');
 } else {
-    // Conexões de banco
     onValue(ref(db, dbPath('config')), (snapshot) => {
         if(snapshot.exists()) {
             const cfg = snapshot.val();
@@ -1002,16 +1069,17 @@ if (isRootUrl) {
         if(state.isAdminLoggedIn) { loadAdminOrders(); filterDashboard(); }
     });
 
-    const savedAppView = localStorage.getItem('lastAppView_' + CURRENT_STORE) || 'catalog';
+    const savedAppView = localStorage.getItem('lastAppView_' + CURRENT_STORE);
+    
     if(state.isAdminLoggedIn) {
-        if(savedAppView === 'admin-panel') {
+        if(!savedAppView || savedAppView === 'admin-panel') {
             const savedTab = localStorage.getItem('lastAdminTab_' + CURRENT_STORE) || 'dash';
             showView('admin-panel');
             showAdminTab(savedTab);
             if(state.adminRole === 'superadmin') loadSystemUsers();
         } else { showView(savedAppView); }
     } else {
-        if(savedAppView === 'admin-panel' || savedAppView === 'admin-login') showView('catalog'); 
+        if(!savedAppView || savedAppView === 'admin-panel' || savedAppView === 'admin-login') showView('catalog'); 
         else showView(savedAppView);
     }
 }
@@ -1022,5 +1090,5 @@ window.app = {
     loginAdmin, logoutAdmin, showAdminTab, saveProduct, editProduct, cancelEdit, deleteProduct, approveOrder, completeOrder, openReceipt, saveStoreConfig, filterDashboard,
     openGallery, closeGallery, prevImage, nextImage, addVariant, removeVariant,
     addVarColor, removeVarColor, addVarExtraLink, removeVarExtraLink, copyPixPayload,
-    createTenantStore, deleteTenantStore, importProductsJSON, processGlobalLogin
+    saveTenantStore, editTenantStore, cancelEditTenant, deleteTenantStore, importProductsJSON, processGlobalLogin
 };
